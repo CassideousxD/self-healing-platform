@@ -1,0 +1,48 @@
+{
+  "receiver": "echo-receiver",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "WorkerQueueBacklog",
+        "namespace": "platform",
+        "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+        "remediation": "auto",
+        "service": "worker",
+        "severity": "warning"
+      },
+      "annotations": {
+        "runbook": "Trigger automated horizontal scale-up of worker deployment",
+        "summary": "Worker job queue depth exceeded 10 items for 1m"
+      },
+      "startsAt": "2026-10-18T17:28:38.257Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://kube-prometheus-stack-prometheus.monitoring:9090/graph?g0.expr=max+by+%28namespace%2C+service%29+%28jobs_queue_depth%7Bnamespace%3D%22platform%22%7D%29+%3E+10&g0.tab=1",
+      "fingerprint": "220226a30f6bcdf1"
+    }
+  ],
+  "notification_reason": "first notification",
+  "groupLabels": {
+    "alertname": "WorkerQueueBacklog",
+    "namespace": "platform",
+    "service": "worker"
+  },
+  "commonLabels": {
+    "alertname": "WorkerQueueBacklog",
+    "namespace": "platform",
+    "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+    "remediation": "auto",
+    "service": "worker",
+    "severity": "warning"
+  },
+  "commonAnnotations": {
+    "runbook": "Trigger automated horizontal scale-up of worker deployment",
+    "summary": "Worker job queue depth exceeded 10 items for 1m"
+  },
+  "routeLabels": {},
+  "externalURL": "http://kube-prometheus-stack-alertmanager.monitoring:9093",
+  "version": "4",
+  "groupKey": "{}/{remediation=\"auto\"}:{alertname=\"WorkerQueueBacklog\", namespace=\"platform\", service=\"worker\"}",
+  "truncatedAlerts": 0
+}
