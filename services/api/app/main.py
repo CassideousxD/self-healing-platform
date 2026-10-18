@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 app = FastAPI(title="api")
-Instrumentator().instrument(app).expose(app)
 
 AUTH_URL = os.getenv("AUTH_URL", "http://auth:8000")
 ENABLE_CHAOS = os.getenv("ENABLE_CHAOS", "false") == "true"
@@ -28,6 +27,9 @@ async def chaos_middleware(request, call_next):
     if random.random() < chaos["error_rate"]:
         return JSONResponse({"error": "injected failure"}, status_code=500)
     return await call_next(request)
+
+
+Instrumentator().instrument(app).expose(app)
 
 
 @app.get("/healthz")
