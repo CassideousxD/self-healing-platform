@@ -48,6 +48,12 @@ jobs:
           done
           echo "All overlays rendered successfully with no bare images."
 
+      - name: Validate monitoring config
+        run: |
+          echo "Validating monitoring/config..."
+          kustomize build monitoring/config > /dev/null
+          echo "monitoring/config rendered successfully."
+
   test:
     name: test (${{ matrix.service }})
     runs-on: ubuntu-latest

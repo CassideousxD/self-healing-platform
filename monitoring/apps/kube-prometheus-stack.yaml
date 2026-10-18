@@ -1,0 +1,103 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 92.10.1
+    helm:
+      releaseName: kube-prometheus-stack
+      valuesObject:
+        defaultRules:
+          create: true
+        # Kind cluster gotchas: unreachable host endpoints disabled
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        # NodeExporter host mount propagation causes crash-loop on macOS kind
+        nodeExporter:
+          enabled: false
+        kubeStateMetrics:
+          enabled: true
+        prometheus:
+          prometheusSpec:
+            serviceMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            serviceMonitorNamespaceSelector: {}
+            retention: 12h
+            scrapeInterval: 15s
+            evaluationInterval: 15s
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+        grafana:
+          enabled: true
+          sidecar:
+            dashboards:
+              enabled: true
+              searchNamespace: ALL
+              label: grafana_dashboard
+              labelValue: "1"
+          additionalDataSources:
+            - name: Loki
+              type: loki
+              url: http://loki.monitoring.svc.cluster.local:3100
+              access: proxy
+              isDefault: false
+        alertmanager:
+          enabled: true
+          config:
+            global:
+              resolve_timeout: 1m
+            route:
+              group_by: ['alertname', 'namespace', 'service']
+              # Demo-friendly alert timings (documented as deliberate):
+              # Production would use longer group_wait and repeat_interval to avoid flapping.
+              group_wait: 5s
+              group_interval: 30s
+              repeat_interval: 5m
+              receiver: 'null'
+              routes:
+                - matchers:
+                    - remediation = "auto"
+                  receiver: 'echo-receiver'
+                  continue: true
+                - matchers:
+                    - remediation = "auto"
+                  receiver: 'controller-webhook'
+            receivers:
+              - name: 'null'
+              - name: 'echo-receiver'
+                webhook_configs:
+                  - url: 'http://echo-receiver.platform.svc.cluster.local:8080/webhook'
+                    send_resolved: true
+              - name: 'controller-webhook'
+                webhook_configs:
+                  - url: 'http://controller.platform.svc.cluster.local:8080/webhook'
+                    send_resolved: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

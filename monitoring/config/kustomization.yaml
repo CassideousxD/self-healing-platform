@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - service-monitors.yaml
+  - prometheus-rules.yaml
+  - echo-receiver.yaml
+  - ../dashboards

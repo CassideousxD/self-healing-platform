@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-receiver
+  namespace: platform
+  labels:
+    app: echo-receiver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-receiver
+  template:
+    metadata:
+      labels:
+        app: echo-receiver
+    spec:
+      containers:
+        - name: echo
+          image: python:3.12-slim
+          command: ["python3", "-u", "-c"]
+          args:
+            - |
+              import http.server
+              import sys
+
+              class Handler(http.server.BaseHTTPRequestHandler):
+                  def do_POST(self):
+                      length = int(self.headers.get('Content-Length', 0))
+                      body = self.rfile.read(length).decode('utf-8')
+                      print("=== ALERTMANAGER_WEBHOOK_PAYLOAD ===", flush=True)
+                      print(body, flush=True)
+                      print("=== END_ALERTMANAGER_WEBHOOK_PAYLOAD ===", flush=True)
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      self.wfile.write(b'{"status":"ok"}')
+
+                  def do_GET(self):
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b"OK")
+
+              server = http.server.HTTPServer(('0.0.0.0', 8080), Handler)
+              print("Echo receiver listening on port 8080", flush=True)
+              server.serve_forever()
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-receiver
+  namespace: platform
+  labels:
+    app: echo-receiver
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: echo-receiver
