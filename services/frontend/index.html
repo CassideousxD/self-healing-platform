@@ -1,0 +1,22 @@
+<!doctype html>
+<html><body style="font-family:sans-serif;max-width:500px;margin:40px auto">
+  <h2>Self-Healing Demo</h2>
+  <button onclick="login()">Login</button>
+  <button onclick="submitJob()">Submit job</button>
+  <button onclick="stats()">Stats</button>
+  <pre id="out"></pre>
+  <script>
+    let token = "";
+    const show = d => document.getElementById("out").textContent = JSON.stringify(d, null, 2);
+    async function login() {
+      const r = await fetch("/auth/login", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({username:"demo", password:"demo123"})});
+      token = (await r.json()).token; show({token});
+    }
+    async function submitJob() {
+      const r = await fetch("/api/jobs", {method:"POST", headers:{Authorization: token}});
+      show({status: r.status, ...(await r.json())});
+    }
+    async function stats() { show(await (await fetch("/api/stats")).json()); }
+  </script>
+</body></html>

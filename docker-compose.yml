@@ -1,0 +1,24 @@
+services:
+  redis:
+    image: redis:7-alpine
+  auth:
+    build: ./services/auth
+    environment:
+      AUTH_SECRET: dev-secret
+  api:
+    build: ./services/api
+    environment:
+      AUTH_URL: http://auth:8000
+      REDIS_URL: redis://redis:6379
+      ENABLE_CHAOS: "true"
+    ports: ["8000:8000"]
+    depends_on: [redis, auth]
+  worker:
+    build: ./services/worker
+    environment:
+      REDIS_URL: redis://redis:6379
+    depends_on: [redis]
+  frontend:
+    build: ./services/frontend
+    ports: ["8081:80"]
+    depends_on: [api, auth]
