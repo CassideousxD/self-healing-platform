@@ -33,13 +33,14 @@ trap stop SIGINT SIGTERM
 
 while true; do
   # Request 1: POST /jobs
-  curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/jobs" \
-    -H "Authorization: $TOKEN" >/dev/null || true
+  R1=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/jobs" \
+    -H "Authorization: $TOKEN" || echo "err")
   COUNT=$((COUNT + 1))
   sleep 0.2
 
   # Request 2: GET /stats
-  curl -s -o /dev/null -w "%{http_code}" "$API_URL/stats" >/dev/null || true
+  R2=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/stats" || echo "err")
   COUNT=$((COUNT + 1))
+  echo "[req $COUNT] POST /jobs -> $R1 | GET /stats -> $R2"
   sleep 0.2
 done
