@@ -11,13 +11,21 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "title": "API Request Rate (req/s)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "sum(rate(http_requests_total{namespace=\"platform\",handler!~\"/healthz|/readyz|/metrics\"}[1m])) by (service)",
           "legendFormat": "{{service}}",
           "refId": "A"
@@ -26,14 +34,22 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "id": 2,
       "title": "API Error Ratio (5xx / Total)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_requests_total{namespace=\"platform\",status=~\"5.*\",handler!~\"/healthz|/readyz|/metrics\"}[1m])) / sum(rate(http_requests_total{namespace=\"platform\",handler!~\"/healthz|/readyz|/metrics\"}[1m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(rate(http_requests_total{namespace=\"platform\",service=\"api\",status=~\"5.*\",handler!~\"/healthz|/readyz|/metrics\"}[1m])) / sum(rate(http_requests_total{namespace=\"platform\",service=\"api\",handler!~\"/healthz|/readyz|/metrics\"}[1m]))) or vector(0)",
           "legendFormat": "5xx Ratio",
           "refId": "A"
         }
@@ -41,13 +57,21 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "id": 3,
       "title": "API Latency p95 (seconds)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket{namespace=\"platform\"}[1m])) by (le))",
           "legendFormat": "p95",
           "refId": "A"
@@ -56,13 +80,21 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "id": 4,
       "title": "Worker Queue Depth",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "max(jobs_queue_depth{namespace=\"platform\"})",
           "legendFormat": "queue depth",
           "refId": "A"
@@ -71,13 +103,21 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
       "id": 5,
       "title": "Pod Container Restarts (5m increase)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
           "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"platform\"}[5m])) by (pod)",
           "legendFormat": "{{pod}}",
           "refId": "A"
@@ -86,14 +126,22 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
       "id": 6,
       "title": "Platform Logs (Loki)",
       "type": "logs",
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "Loki" },
-          "expr": "{namespace=\"platform\"}",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{namespace=\"platform\"} !~ \"/healthz|/readyz|/metrics\"",
           "refId": "A"
         }
       ]
@@ -102,13 +150,21 @@
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["platform", "self-healing"],
+  "tags": [
+    "platform",
+    "self-healing"
+  ],
   "time": {
     "from": "now-15m",
     "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": ["5s", "10s", "30s", "1m"]
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m"
+    ]
   },
   "timezone": "browser",
   "title": "Platform Overview",
