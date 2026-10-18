@@ -56,4 +56,4 @@ def test_get_queue_depth_redis_error():
         assert math.isnan(main.get_queue_depth())
         response = client.get("/metrics")
         assert response.status_code == 200
-        assert "jobs_queue_depth Nan" in response.text or "jobs_queue_depth nan" in response.text or "jobs_queue_depth NaN" in response.text
+        assert "jobs_queue_depth NaN" in response.text
