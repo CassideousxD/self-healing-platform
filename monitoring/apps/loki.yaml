@@ -26,6 +26,14 @@ spec:
           replicas: 1
           persistence:
             enabled: false
+          # Production would use object storage; logs are lost if the pod restarts, which is acceptable for the demo.
+          extraVolumes:
+            - name: storage
+              emptyDir:
+                sizeLimit: 1Gi
+          extraVolumeMounts:
+            - name: storage
+              mountPath: /var/loki
           resources:
             requests:
               cpu: 50m
