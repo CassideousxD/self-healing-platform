@@ -37,3 +37,23 @@ def test_process_one_with_item():
         assert processed is True
         mock_incr.assert_called_once_with("jobs_done")
         mock_metric_inc.assert_called_once()
+
+
+def test_get_queue_depth_success():
+    with patch.object(main.r, "llen", return_value=5):
+        assert main.get_queue_depth() == 5.0
+        response = client.get("/metrics")
+        assert response.status_code == 200
+        assert "jobs_queue_depth 5.0" in response.text
+
+
+def test_get_queue_depth_redis_error():
+    import math
+
+    import redis
+
+    with patch.object(main.r, "llen", side_effect=redis.RedisError("connection error")):
+        assert math.isnan(main.get_queue_depth())
+        response = client.get("/metrics")
+        assert response.status_code == 200
+        assert "jobs_queue_depth Nan" in response.text or "jobs_queue_depth nan" in response.text or "jobs_queue_depth NaN" in response.text
