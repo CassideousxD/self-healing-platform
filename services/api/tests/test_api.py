@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import prometheus_client
+import pytest
 import redis
 from fastapi.testclient import TestClient
 
@@ -7,6 +9,17 @@ from services.api.app import main
 from services.api.app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def reset_prometheus_collectors():
+    for name in list(prometheus_client.REGISTRY._names_to_collectors.keys()):
+        if name.startswith("http_"):
+            try:
+                prometheus_client.REGISTRY.unregister(prometheus_client.REGISTRY._names_to_collectors[name])
+            except KeyError:
+                pass
+
 
 
 def test_healthz():
@@ -85,3 +98,29 @@ def test_chaos_endpoints_enabled():
         with patch("os._exit") as mock_exit:
             resp = client.post("/chaos/crash")
             mock_exit.assert_called_once_with(1)
+
+
+def test_chaos_errors_recorded_in_metrics():
+    with patch.dict(main.chaos, {"error_rate": 1.0, "latency_ms": 0}):
+        resp = client.get("/stats")
+        assert resp.status_code == 500
+        metrics = client.get("/metrics").text
+        assert 'http_requests_total{handler="/stats",method="GET",status="5xx"}' in metrics
+
+
+def test_chaos_latency_recorded_in_metrics():
+    def get_duration_sum():
+        for line in client.get("/metrics").text.splitlines():
+            if line.startswith("http_request_duration_highr_seconds_sum "):
+                return float(line.split()[-1])
+        return 0.0
+
+    val_before = get_duration_sum()
+    with patch.dict(main.chaos, {"error_rate": 0.0, "latency_ms": 200}):
+        with patch.object(main.r, "llen", return_value=0), patch.object(main.r, "get", return_value=None):
+            resp = client.get("/stats")
+            assert resp.status_code == 200
+    val_after = get_duration_sum()
+    # asyncio.sleep can wake slightly early and the instrumentator timer uses a different clock;
+    # the no-chaos delta is about 0.002 so 0.15 still proves the sleep is counted
+    assert val_after - val_before >= 0.15
