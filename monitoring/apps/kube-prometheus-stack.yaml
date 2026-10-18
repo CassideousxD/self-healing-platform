@@ -76,20 +76,20 @@ spec:
               routes:
                 - matchers:
                     - remediation = "auto"
-                  receiver: 'controller-webhook'
+                  receiver: 'echo-receiver'
                   continue: true
                 - matchers:
                     - remediation = "auto"
-                  receiver: 'echo-receiver'
+                  receiver: 'controller-webhook'
             receivers:
               - name: 'null'
-              - name: 'controller-webhook'
-                webhook_configs:
-                  - url: 'http://controller.platform.svc.cluster.local:8080/webhook'
-                    send_resolved: true
               - name: 'echo-receiver'
                 webhook_configs:
                   - url: 'http://echo-receiver.platform.svc.cluster.local:8080/webhook'
+                    send_resolved: true
+              - name: 'controller-webhook'
+                webhook_configs:
+                  - url: 'http://controller.platform.svc.cluster.local:8080/webhook'
                     send_resolved: true
   destination:
     server: https://kubernetes.default.svc
