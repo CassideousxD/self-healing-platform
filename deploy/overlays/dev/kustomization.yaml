@@ -9,13 +9,13 @@ patches:
 images:
 - name: api
   newName: ghcr.io/cassideousxd/api
-  newTag: 003801dc06481eb46502bef8fe9b0ede9dcf728e
+  newTag: 346edf2092679b4760e5dd6291603bc143646d32
 - name: auth
   newName: ghcr.io/cassideousxd/auth
-  newTag: 003801dc06481eb46502bef8fe9b0ede9dcf728e
+  newTag: 346edf2092679b4760e5dd6291603bc143646d32
 - name: frontend
   newName: ghcr.io/cassideousxd/frontend
-  newTag: 003801dc06481eb46502bef8fe9b0ede9dcf728e
+  newTag: 346edf2092679b4760e5dd6291603bc143646d32
 - name: worker
   newName: ghcr.io/cassideousxd/worker
-  newTag: 003801dc06481eb46502bef8fe9b0ede9dcf728e
+  newTag: 346edf2092679b4760e5dd6291603bc143646d32
