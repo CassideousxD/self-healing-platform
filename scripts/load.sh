@@ -22,6 +22,9 @@ fi
 echo "Authenticated successfully."
 echo "Generating ~5 req/s (POST /jobs and GET /stats). Press Ctrl+C to stop."
 
+DURATION="${1:-0}"
+START_TIME=$(date +%s)
+
 COUNT=0
 stop() {
   echo ""
@@ -32,6 +35,12 @@ stop() {
 trap stop SIGINT SIGTERM
 
 while true; do
+  if [[ "$DURATION" -gt 0 ]]; then
+    NOW=$(date +%s)
+    if (( NOW - START_TIME >= DURATION )); then
+      stop
+    fi
+  fi
   # Request 1: POST /jobs
   R1=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/jobs" \
     -H "Authorization: $TOKEN" || echo "err")
