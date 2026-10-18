@@ -7,6 +7,10 @@ on:
     branches: [main]
     paths-ignore:
       - "deploy/**"
+      - "monitoring/**"
+      - "infra/**"
+      - "scripts/**"
+      - "docs/**"
 
 permissions:
   contents: read
