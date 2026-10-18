@@ -1,10 +1,10 @@
 resource "helm_release" "metrics_server" {
-  name             = "metrics-server"
-  repository       = "https://kubernetes-sigs.github.io/metrics-server/"
-  chart            = "metrics-server"
-  version          = "3.12.2"
-  namespace        = "kube-system"
-  cleanup_on_fail  = true
+  name            = "metrics-server"
+  repository      = "https://kubernetes-sigs.github.io/metrics-server/"
+  chart           = "metrics-server"
+  version         = "3.12.2"
+  namespace       = "kube-system"
+  cleanup_on_fail = true
 
   values = [
     yamlencode({
@@ -81,6 +81,28 @@ resource "helm_release" "argocd_apps" {
               ]
             }
           ]
+        }
+        monitoring = {
+          namespace = "argocd"
+          project   = "default"
+          source = {
+            repoURL        = var.repo_url
+            targetRevision = var.target_revision
+            path           = "monitoring/apps"
+          }
+          destination = {
+            server    = "https://kubernetes.default.svc"
+            namespace = "argocd"
+          }
+          syncPolicy = {
+            automated = {
+              prune    = true
+              selfHeal = true
+            }
+            syncOptions = [
+              "CreateNamespace=true"
+            ]
+          }
         }
       }
     })
