@@ -1,6 +1,6 @@
 # Alertmanager Webhook Fixtures
 
-All fixtures in this directory are **verbatim captures** received by the `deploy/echo-receiver` webhook receiver from Alertmanager running on the local Kubernetes cluster. No payload has been hand-edited, synthesized, or reconstructed.
+All fixtures in this directory are the **verbatim request bodies** received by the `deploy/echo-receiver` webhook receiver from Alertmanager running on the local Kubernetes cluster, **pretty-printed with `jq .`** (key order preserved, standard indentation applied, and JSON-escaped `\u0026` decoded to `&`). They are not byte-for-byte stream dumps of the HTTP wire protocol, and no content, label, or annotation has been synthesized, hand-edited, or reconstructed.
 
 ## Alertmanager Environment
 
@@ -13,20 +13,20 @@ All fixtures in this directory are **verbatim captures** received by the `deploy
     go version:       go1.26.8
     platform:         linux/arm64
   ```
-- **Top-Level Key Order**:
+- **Top-Level Key Order (Preserved)**:
   `["receiver","status","alerts","notification_reason","groupLabels","commonLabels","commonAnnotations","routeLabels","externalURL","version","groupKey","truncatedAlerts"]`
 
 ## Extraction Mechanism
 
-All fixtures were captured by saving raw logs from `deploy/echo-receiver` to `/tmp/echo_raw.log`:
+All fixtures were captured by dumping logs from `deploy/echo-receiver` to `/tmp/echo_raw.log`:
 ```bash
 kubectl -n platform logs deploy/echo-receiver > /tmp/echo_raw.log
 ```
-Each payload was extracted by matching alertname, status, and fingerprint, and copied byte-for-byte to `controller/tests/fixtures/`.
+Each fixture was extracted using `jq` to select the exact alert notification and format it with standard 2-space indentation. Where multiple notifications exist for an alert due to repeated testing (e.g. WorkerQueueBacklog), only the first notification is kept.
 
-## Fixture Catalog & Checksums
+## Fixture Catalog & Committed SHA256 Checksums
 
-| File | Status | Alertname | Fingerprint(s) | SHA256 Checksum | Extraction Command |
+| File | Status | Alertname | Fingerprint(s) | Committed File SHA256 | Extraction Command |
 |---|---|---|---|---|---|
 | `alertmanager_firing.json` | firing | `ApiHighErrorRate` | `61652fcbcf60c7a2` | `e25b139b2d8a29b667734c6d822f8ddd16b5f99e85cf3cd466448518d8f2ab87` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="firing" and .alerts[0].labels.alertname=="ApiHighErrorRate" and .alerts[0].fingerprint=="61652fcbcf60c7a2")'` |
 | `alertmanager_resolved.json` | resolved | `ApiHighErrorRate` | `61652fcbcf60c7a2` | `8240d029154e7d647ad26b60b70144830fed739b52c325615eb9027bba9a3790` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="resolved" and .alerts[0].labels.alertname=="ApiHighErrorRate" and .alerts[0].fingerprint=="61652fcbcf60c7a2")'` |
