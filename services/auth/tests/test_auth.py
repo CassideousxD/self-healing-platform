@@ -7,8 +7,7 @@ client = TestClient(app)
 
 def test_healthz():
     response = client.get("/healthz")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.status_code == 500  # Deliberate failure for verification
 
 
 def test_readyz():
