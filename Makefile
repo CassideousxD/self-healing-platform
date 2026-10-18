@@ -17,6 +17,15 @@ deploy-prod:
 metrics-server:
 	kubectl apply -k infra/metrics-server
 
+tf-cluster-up:
+	terraform -chdir=infra/terraform/cluster apply -auto-approve
+
+tf-cluster-down:
+	terraform -chdir=infra/terraform/cluster destroy -auto-approve
+
+tf-bootstrap:
+	terraform -chdir=infra/terraform/bootstrap apply -auto-approve
+
 lint:
 	ruff check .
 
