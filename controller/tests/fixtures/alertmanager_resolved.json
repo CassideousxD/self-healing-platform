@@ -1,0 +1,48 @@
+{
+  "receiver": "echo-receiver",
+  "status": "resolved",
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "ApiHighErrorRate",
+        "namespace": "platform",
+        "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+        "remediation": "auto",
+        "service": "api",
+        "severity": "critical"
+      },
+      "annotations": {
+        "runbook": "Trigger automated rollback or restart if error rate persists",
+        "summary": "API 5xx error rate exceeded 5% over 1m"
+      },
+      "startsAt": "2026-10-18T17:26:53.257Z",
+      "endsAt": "2026-10-18T17:28:08.257Z",
+      "generatorURL": "http://kube-prometheus-stack-prometheus.monitoring:9090/graph?g0.expr=%28sum+by+%28namespace%2C+service%29+%28rate%28http_requests_total%7Bhandler%21~%22%2Fhealthz%7C%2Freadyz%7C%2Fmetrics%22%2Cnamespace%3D%22platform%22%2Cservice%3D%22api%22%2Cstatus%3D~%225.%2A%22%7D%5B1m%5D%29%29+%2F+sum+by+%28namespace%2C+service%29+%28rate%28http_requests_total%7Bhandler%21~%22%2Fhealthz%7C%2Freadyz%7C%2Fmetrics%22%2Cnamespace%3D%22platform%22%2Cservice%3D%22api%22%7D%5B1m%5D%29%29%29+%3E+0.05+and+on+%28namespace%2C+service%29+%28sum+by+%28namespace%2C+service%29+%28rate%28http_requests_total%7Bhandler%21~%22%2Fhealthz%7C%2Freadyz%7C%2Fmetrics%22%2Cnamespace%3D%22platform%22%2Cservice%3D%22api%22%7D%5B1m%5D%29%29+%3E+0.5%29&g0.tab=1",
+      "fingerprint": "61652fcbcf60c7a2"
+    }
+  ],
+  "notification_reason": "all alerts resolved",
+  "groupLabels": {
+    "alertname": "ApiHighErrorRate",
+    "namespace": "platform",
+    "service": "api"
+  },
+  "commonLabels": {
+    "alertname": "ApiHighErrorRate",
+    "namespace": "platform",
+    "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+    "remediation": "auto",
+    "service": "api",
+    "severity": "critical"
+  },
+  "commonAnnotations": {
+    "runbook": "Trigger automated rollback or restart if error rate persists",
+    "summary": "API 5xx error rate exceeded 5% over 1m"
+  },
+  "routeLabels": {},
+  "externalURL": "http://kube-prometheus-stack-alertmanager.monitoring:9093",
+  "version": "4",
+  "groupKey": "{}/{remediation=\"auto\"}:{alertname=\"ApiHighErrorRate\", namespace=\"platform\", service=\"api\"}",
+  "truncatedAlerts": 0
+}
