@@ -13,17 +13,26 @@ All fixtures in this directory are **verbatim captures** received by the `deploy
     go version:       go1.26.8
     platform:         linux/arm64
   ```
-- **Schema Note**: In Alertmanager v0.34+, standard v4 webhook payloads include `routeLabels` and `notification_reason` (e.g. `"first notification"` when an alert group starts firing, or `"all alerts resolved"` when all alerts in a group resolve).
+- **Top-Level Key Order**:
+  `["receiver","status","alerts","notification_reason","groupLabels","commonLabels","commonAnnotations","routeLabels","externalURL","version","groupKey","truncatedAlerts"]`
 
-## Fixtures Catalog
+## Extraction Mechanism
 
-| File | Status | Alert Name | Service | Captured Timestamp (UTC) | Trigger Mechanism |
+All fixtures were captured by saving raw logs from `deploy/echo-receiver` to `/tmp/echo_raw.log`:
+```bash
+kubectl -n platform logs deploy/echo-receiver > /tmp/echo_raw.log
+```
+Each payload was extracted by matching alertname, status, and fingerprint, and copied byte-for-byte to `controller/tests/fixtures/`.
+
+## Fixture Catalog & Checksums
+
+| File | Status | Alertname | Fingerprint(s) | SHA256 Checksum | Extraction Command |
 |---|---|---|---|---|---|
-| `alertmanager_firing.json` | firing | `ApiHighErrorRate` | `api` | 2026-10-18T17:26:53Z | POST `/chaos/errors?rate=1.0` injected on both API pods under traffic from `scripts/load.sh`. |
-| `alertmanager_resolved.json` | resolved | `ApiHighErrorRate` | `api` | 2026-10-18T17:27:38Z | POST `/chaos/reset` injected on both API pods; 5xx error rate dropped to 0. |
-| `alertmanager_worker_backlog.json` | firing | `WorkerQueueBacklog` | `worker` | 2026-10-18T17:28:38Z | `kubectl -n platform scale deploy/worker --replicas=0` while generating jobs via API `/jobs` endpoint. |
-| `alertmanager_api_high_latency.json` | firing | `ApiHighLatency` | `api` | 2026-10-18T17:29:08Z | POST `/chaos/latency?ms=350` injected on both API pods under traffic from `scripts/load.sh`. |
-| `alertmanager_pod_restarted.json` | firing | `PodRestarted` | `api` | 2026-10-18T17:30:53Z | POST `/chaos/crash` on single API pod `api-576f78c799-wwsxr`. |
-| `alertmanager_multi_alert.json` | firing | `PodRestarted` (2 alerts) | `api` | 2026-10-18T17:44:08Z | Concurrent POST `/chaos/crash` sent to both `api` pods (`api-576f78c799-tswkt` and `api-576f78c799-wwsxr`) within 1 second. Alertmanager grouped both into one notification. |
-| `alertmanager_pod_crashlooping.json` | firing | `PodCrashLooping` | `crashtest` | 2026-10-18T17:47:53Z | Created `crashtest` deployment (`busybox:1.36 -- sh -c "exit 1"`). Fired after `1m` in `CrashLoopBackOff`. Proves regex on deployment-style pod names. |
-| `alertmanager_pod_crashlooping_resolved.json` | resolved | `PodCrashLooping` | `crashtest` | 2026-10-18T17:48:23Z | Deleted `crashtest` deployment; metric cleared and alert resolved. |
+| `alertmanager_firing.json` | firing | `ApiHighErrorRate` | `61652fcbcf60c7a2` | `e25b139b2d8a29b667734c6d822f8ddd16b5f99e85cf3cd466448518d8f2ab87` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="firing" and .alerts[0].labels.alertname=="ApiHighErrorRate" and .alerts[0].fingerprint=="61652fcbcf60c7a2")'` |
+| `alertmanager_resolved.json` | resolved | `ApiHighErrorRate` | `61652fcbcf60c7a2` | `8240d029154e7d647ad26b60b70144830fed739b52c325615eb9027bba9a3790` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="resolved" and .alerts[0].labels.alertname=="ApiHighErrorRate" and .alerts[0].fingerprint=="61652fcbcf60c7a2")'` |
+| `alertmanager_worker_backlog.json` | firing | `WorkerQueueBacklog` | `220226a30f6bcdf1` | `eaf2802c29929639ce62057a40a9d507b9f76214ef3db3a11ae734cfd36efeed` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq -s 'map(select(.status=="firing" and .alerts[0].labels.alertname=="WorkerQueueBacklog" and .alerts[0].fingerprint=="220226a30f6bcdf1"))[0]'` |
+| `alertmanager_api_high_latency.json` | firing | `ApiHighLatency` | `70739fcfbdd178ab` | `bfe805a6d5cc4d6617f1ae4b8fe9b6a8b24b79dbbe3b819d86a2d2d9cb848698` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="firing" and .alerts[0].labels.alertname=="ApiHighLatency" and .alerts[0].fingerprint=="70739fcfbdd178ab")'` |
+| `alertmanager_pod_restarted.json` | firing | `PodRestarted` | `174436af7f633789` | `64d05134a70f44569c7bc8ffa789ea4d9004ecd97d5f3fcf6ef75b4f1417a0da` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="firing" and (.alerts\|length)==1 and .alerts[0].labels.alertname=="PodRestarted" and .alerts[0].fingerprint=="174436af7f633789")'` |
+| `alertmanager_multi_alert.json` | firing | `PodRestarted` (2 alerts) | `e9cd3b53f8f69824`, `174436af7f633789` | `1a4b003ef5e1a6dd69ec657365fe0c6002778080b8acc5c77e336324c820ec6e` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="firing" and (.alerts\|length)==2 and .alerts[0].labels.alertname=="PodRestarted")'` |
+| `alertmanager_pod_crashlooping.json` | firing | `PodCrashLooping` | `0dfa0bd1435cf4ab` | `32f338460be93da3ea9f5e09192bf5597ccfdcba1318adb0622eebcdfd433ab9` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="firing" and .alerts[0].labels.alertname=="PodCrashLooping" and .alerts[0].fingerprint=="0dfa0bd1435cf4ab")'` |
+| `alertmanager_pod_crashlooping_resolved.json` | resolved | `PodCrashLooping` | `0dfa0bd1435cf4ab` | `8816176ff87fb68eb4e2c2c8cf4439efc1d55658699a582c63ae4a96a3ccea4e` | `grep '^{"receiver"' /tmp/echo_raw.log \| jq 'select(.status=="resolved" and .alerts[0].labels.alertname=="PodCrashLooping" and .alerts[0].fingerprint=="0dfa0bd1435cf4ab")'` |
