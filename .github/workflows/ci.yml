@@ -97,3 +97,48 @@ jobs:
             ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.service }}:latest
           cache-from: type=gha
           cache-to: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'type=gha,mode=max' || '' }}
+
+  bump-tag:
+    name: bump-tag
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITOPS_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Lowercase repository owner
+        id: repo_owner
+        run: |
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "owner=${OWNER_LOWER}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update image tags in dev overlay
+        run: |
+          cd deploy/overlays/dev
+          kustomize edit set image \
+            auth=ghcr.io/${{ steps.repo_owner.outputs.owner }}/auth:${{ github.sha }} \
+            api=ghcr.io/${{ steps.repo_owner.outputs.owner }}/api:${{ github.sha }} \
+            worker=ghcr.io/${{ steps.repo_owner.outputs.owner }}/worker:${{ github.sha }} \
+            frontend=ghcr.io/${{ steps.repo_owner.outputs.owner }}/frontend:${{ github.sha }}
+
+      - name: Commit and push tag bump
+        run: |
+          git add deploy/overlays/dev/
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore(deploy): bump dev images to ${GITHUB_SHA::7}"
+          git pull --rebase origin main
+          git push origin main
+
