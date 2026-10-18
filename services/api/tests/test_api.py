@@ -121,4 +121,6 @@ def test_chaos_latency_recorded_in_metrics():
             resp = client.get("/stats")
             assert resp.status_code == 200
     val_after = get_duration_sum()
-    assert val_after - val_before >= 0.2
+    # asyncio.sleep can wake slightly early and the instrumentator timer uses a different clock;
+    # the no-chaos delta is about 0.002 so 0.15 still proves the sleep is counted
+    assert val_after - val_before >= 0.15
