@@ -49,9 +49,8 @@ resource "helm_release" "argocd_apps" {
 
   values = [
     yamlencode({
-      applications = [
-        {
-          name      = "platform"
+      applications = {
+        platform = {
           namespace = "argocd"
           project   = "default"
           source = {
@@ -83,7 +82,7 @@ resource "helm_release" "argocd_apps" {
             }
           ]
         }
-      ]
+      }
     })
   ]
 }
