@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import redis
 from fastapi import FastAPI
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 from prometheus_fastapi_instrumentator import Instrumentator
 
 
@@ -21,6 +21,17 @@ Instrumentator().instrument(app).expose(app)
 r = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379"))
 JOB_SECONDS = float(os.getenv("JOB_SECONDS", "1"))
 JOBS_DONE = Counter("worker_jobs_processed_total", "Jobs processed")
+JOBS_QUEUE_DEPTH = Gauge("jobs_queue_depth", "Current depth of jobs queue")
+
+
+def get_queue_depth() -> float:
+    try:
+        return float(r.llen("jobs"))
+    except Exception:
+        return float("nan")
+
+
+JOBS_QUEUE_DEPTH.set_function(get_queue_depth)
 
 def process_one(timeout: int = 5) -> bool:
     item = r.brpop("jobs", timeout=timeout)
