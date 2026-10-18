@@ -1,0 +1,92 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: platform.remediation.rules
+      # NOTE: Evaluation interval and 'for' durations use demo-friendly values (30s - 1m)
+      # to enable fast demonstration of self-healing. Production systems would use
+      # longer windows (e.g., 5m - 15m) to avoid alert flapping.
+      rules:
+        - alert: PodRestarted
+          expr: |
+            label_replace(
+              increase(kube_pod_container_status_restarts_total{namespace="platform"}[5m]) > 0,
+              "service", "$1", "pod", "^(.*)-[a-z0-9]+-[a-z0-9]+$"
+            )
+          labels:
+            severity: info
+            remediation: auto
+            namespace: platform
+          annotations:
+            summary: "Pod {{ $labels.pod }} restarted in namespace platform"
+            runbook: "Log event and observe container termination reason"
+
+        - alert: PodCrashLooping
+          expr: |
+            label_replace(
+              kube_pod_container_status_waiting_reason{namespace="platform",reason="CrashLoopBackOff"} == 1,
+              "service", "$1", "pod", "^(.*)-[a-z0-9]+-[a-z0-9]+$"
+            )
+          for: 1m
+          labels:
+            severity: critical
+            remediation: auto
+            namespace: platform
+          annotations:
+            summary: "Pod {{ $labels.pod }} is in CrashLoopBackOff"
+            runbook: "Remediate via automated pod restart or rollback"
+
+        - alert: ApiHighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{namespace="platform",service="api",status=~"5.*",handler!~"/healthz|/readyz|/metrics"}[1m]))
+              /
+              sum(rate(http_requests_total{namespace="platform",service="api",handler!~"/healthz|/readyz|/metrics"}[1m]))
+            ) > 0.05
+            and
+            sum(rate(http_requests_total{namespace="platform",service="api",handler!~"/healthz|/readyz|/metrics"}[1m])) > 0.5
+          for: 30s
+          labels:
+            severity: critical
+            remediation: auto
+            namespace: platform
+            service: api
+          annotations:
+            summary: "API 5xx error rate exceeded 5% over 1m"
+            runbook: "Trigger automated rollback or restart if error rate persists"
+
+        - alert: ApiHighLatency
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum(rate(http_request_duration_highr_seconds_bucket{namespace="platform",service="api"}[1m])) by (le)
+            ) > 0.75
+            and
+            sum(rate(http_request_duration_highr_seconds_count{namespace="platform",service="api"}[1m])) > 0.5
+          for: 30s
+          labels:
+            severity: warning
+            remediation: auto
+            namespace: platform
+            service: api
+          annotations:
+            summary: "API p95 latency exceeded 750ms over 1m"
+            runbook: "Scale API replicas or investigate upstream resource exhaustion"
+
+        - alert: WorkerQueueBacklog
+          expr: |
+            max(jobs_queue_depth{namespace="platform"}) > 10
+          for: 1m
+          labels:
+            severity: warning
+            remediation: auto
+            namespace: platform
+            service: worker
+          annotations:
+            summary: "Worker job queue depth exceeded 10 items for 1m"
+            runbook: "Trigger automated horizontal scale-up of worker deployment"

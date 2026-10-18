@@ -34,5 +34,5 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-
-*config
+# Generated cluster kubeconfig
+*kubeconfig*
