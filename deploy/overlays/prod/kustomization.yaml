@@ -6,3 +6,17 @@ resources:
 
 patches:
   - path: replicas.yaml
+
+images:
+  - name: api
+    newName: ghcr.io/cassideousxd/api
+    newTag: 346edf2092679b4760e5dd6291603bc143646d32
+  - name: auth
+    newName: ghcr.io/cassideousxd/auth
+    newTag: 346edf2092679b4760e5dd6291603bc143646d32
+  - name: frontend
+    newName: ghcr.io/cassideousxd/frontend
+    newTag: 346edf2092679b4760e5dd6291603bc143646d32
+  - name: worker
+    newName: ghcr.io/cassideousxd/worker
+    newTag: 346edf2092679b4760e5dd6291603bc143646d32
