@@ -2,7 +2,20 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../../base
+- ../../base
 
 patches:
-  - path: patch-chaos.yaml
+- path: patch-chaos.yaml
+images:
+- name: api
+  newName: ghcr.io/cassideousxd/api
+  newTag: f10dd00372ebd3ee65408cb03920440c064d7375
+- name: auth
+  newName: ghcr.io/cassideousxd/auth
+  newTag: f10dd00372ebd3ee65408cb03920440c064d7375
+- name: frontend
+  newName: ghcr.io/cassideousxd/frontend
+  newTag: f10dd00372ebd3ee65408cb03920440c064d7375
+- name: worker
+  newName: ghcr.io/cassideousxd/worker
+  newTag: f10dd00372ebd3ee65408cb03920440c064d7375
