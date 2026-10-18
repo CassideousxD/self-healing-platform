@@ -1,0 +1,82 @@
+{
+  "receiver": "echo-receiver",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodRestarted",
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.1.34:8080",
+        "job": "kube-state-metrics",
+        "namespace": "platform",
+        "pod": "api-576f78c799-tswkt",
+        "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+        "remediation": "auto",
+        "service": "api",
+        "severity": "info",
+        "uid": "79ab017b-1693-442d-afa3-8f04df8e80fe"
+      },
+      "annotations": {
+        "runbook": "Log event and observe container termination reason",
+        "summary": "Pod api-576f78c799-tswkt restarted in namespace platform"
+      },
+      "startsAt": "2026-10-18T17:44:08.257Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://kube-prometheus-stack-prometheus.monitoring:9090/graph?g0.expr=label_replace%28increase%28kube_pod_container_status_restarts_total%7Bnamespace%3D%22platform%22%7D%5B5m%5D%29+%3E+0%2C+%22service%22%2C+%22%241%22%2C+%22pod%22%2C+%22%5E%28.%2A%29-%5Ba-z0-9%5D%2B-%5Ba-z0-9%5D%2B%24%22%29&g0.tab=1",
+      "fingerprint": "e9cd3b53f8f69824"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodRestarted",
+        "container": "api",
+        "endpoint": "http",
+        "instance": "10.244.1.34:8080",
+        "job": "kube-state-metrics",
+        "namespace": "platform",
+        "pod": "api-576f78c799-wwsxr",
+        "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+        "remediation": "auto",
+        "service": "api",
+        "severity": "info",
+        "uid": "0b7c66c7-07a3-4d2d-8f5b-caebaa5c25f0"
+      },
+      "annotations": {
+        "runbook": "Log event and observe container termination reason",
+        "summary": "Pod api-576f78c799-wwsxr restarted in namespace platform"
+      },
+      "startsAt": "2026-10-18T17:44:08.257Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://kube-prometheus-stack-prometheus.monitoring:9090/graph?g0.expr=label_replace%28increase%28kube_pod_container_status_restarts_total%7Bnamespace%3D%22platform%22%7D%5B5m%5D%29+%3E+0%2C+%22service%22%2C+%22%241%22%2C+%22pod%22%2C+%22%5E%28.%2A%29-%5Ba-z0-9%5D%2B-%5Ba-z0-9%5D%2B%24%22%29&g0.tab=1",
+      "fingerprint": "174436af7f633789"
+    }
+  ],
+  "notification_reason": "first notification",
+  "groupLabels": {
+    "alertname": "PodRestarted",
+    "namespace": "platform",
+    "service": "api"
+  },
+  "commonLabels": {
+    "alertname": "PodRestarted",
+    "container": "api",
+    "endpoint": "http",
+    "instance": "10.244.1.34:8080",
+    "job": "kube-state-metrics",
+    "namespace": "platform",
+    "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+    "remediation": "auto",
+    "service": "api",
+    "severity": "info"
+  },
+  "commonAnnotations": {
+    "runbook": "Log event and observe container termination reason"
+  },
+  "routeLabels": {},
+  "externalURL": "http://kube-prometheus-stack-alertmanager.monitoring:9093",
+  "version": "4",
+  "groupKey": "{}/{remediation=\"auto\"}:{alertname=\"PodRestarted\", namespace=\"platform\", service=\"api\"}",
+  "truncatedAlerts": 0
+}

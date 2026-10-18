@@ -1,0 +1,48 @@
+{
+  "receiver": "echo-receiver",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ApiHighLatency",
+        "namespace": "platform",
+        "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+        "remediation": "auto",
+        "service": "api",
+        "severity": "warning"
+      },
+      "annotations": {
+        "runbook": "Scale API replicas or investigate upstream resource exhaustion",
+        "summary": "API p95 latency exceeded 750ms over 1m"
+      },
+      "startsAt": "2026-10-18T17:29:08.257Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://kube-prometheus-stack-prometheus.monitoring:9090/graph?g0.expr=histogram_quantile%280.95%2C+sum+by+%28le%2C+namespace%2C+service%29+%28rate%28http_request_duration_highr_seconds_bucket%7Bnamespace%3D%22platform%22%2Cservice%3D%22api%22%7D%5B1m%5D%29%29%29+%3E+0.75+and+on+%28namespace%2C+service%29+%28sum+by+%28namespace%2C+service%29+%28rate%28http_request_duration_highr_seconds_count%7Bnamespace%3D%22platform%22%2Cservice%3D%22api%22%7D%5B1m%5D%29%29+%3E+0.5%29&g0.tab=1",
+      "fingerprint": "70739fcfbdd178ab"
+    }
+  ],
+  "notification_reason": "first notification",
+  "groupLabels": {
+    "alertname": "ApiHighLatency",
+    "namespace": "platform",
+    "service": "api"
+  },
+  "commonLabels": {
+    "alertname": "ApiHighLatency",
+    "namespace": "platform",
+    "prometheus": "monitoring/kube-prometheus-stack-prometheus",
+    "remediation": "auto",
+    "service": "api",
+    "severity": "warning"
+  },
+  "commonAnnotations": {
+    "runbook": "Scale API replicas or investigate upstream resource exhaustion",
+    "summary": "API p95 latency exceeded 750ms over 1m"
+  },
+  "routeLabels": {},
+  "externalURL": "http://kube-prometheus-stack-alertmanager.monitoring:9093",
+  "version": "4",
+  "groupKey": "{}/{remediation=\"auto\"}:{alertname=\"ApiHighLatency\", namespace=\"platform\", service=\"api\"}",
+  "truncatedAlerts": 0
+}
