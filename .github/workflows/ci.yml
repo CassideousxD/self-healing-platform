@@ -32,6 +32,18 @@ jobs:
       - name: Run Ruff
         run: ruff check .
 
+      - name: Validate Kustomize overlays
+        run: |
+          for overlay in dev prod; do
+            echo "Validating deploy/overlays/${overlay}..."
+            rendered=$(kustomize build "deploy/overlays/${overlay}")
+            if echo "$rendered" | grep -E 'image:\s*(api|auth|worker|frontend)(\s*|$)'; then
+              echo "::error::Bare image name detected in deploy/overlays/${overlay}"
+              exit 1
+            fi
+          done
+          echo "All overlays rendered successfully with no bare images."
+
   test:
     name: test (${{ matrix.service }})
     runs-on: ubuntu-latest
@@ -130,6 +142,16 @@ jobs:
             api=ghcr.io/${{ steps.repo_owner.outputs.owner }}/api:${{ github.sha }} \
             worker=ghcr.io/${{ steps.repo_owner.outputs.owner }}/worker:${{ github.sha }} \
             frontend=ghcr.io/${{ steps.repo_owner.outputs.owner }}/frontend:${{ github.sha }}
+
+      - name: Verify dev overlay image tags
+        run: |
+          MATCH_COUNT=$(kustomize build deploy/overlays/dev | grep -c -E "image:\s*ghcr\.io/${{ steps.repo_owner.outputs.owner }}/(auth|api|worker|frontend):${{ github.sha }}" || true)
+          if [ "$MATCH_COUNT" -ne 4 ]; then
+            echo "::error::Expected 4 images matching ghcr.io/${{ steps.repo_owner.outputs.owner }}/(auth|api|worker|frontend):${{ github.sha }}, but found ${MATCH_COUNT}"
+            kustomize build deploy/overlays/dev | grep "image:"
+            exit 1
+          fi
+          echo "Verified dev overlay: exactly 4 images match expected SHA ${{ github.sha }}"
 
       - name: Commit and push tag bump
         run: |
