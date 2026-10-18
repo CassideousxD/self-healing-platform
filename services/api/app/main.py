@@ -1,5 +1,9 @@
-import asyncio, os, random
-import httpx, redis
+import asyncio
+import os
+import random
+
+import httpx
+import redis
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -14,6 +18,7 @@ chaos = {"error_rate": 0.0, "latency_ms": 0}
 
 SKIP = ("/chaos", "/healthz", "/readyz", "/metrics")
 
+
 @app.middleware("http")
 async def chaos_middleware(request, call_next):
     if request.url.path.startswith(SKIP):
@@ -24,8 +29,11 @@ async def chaos_middleware(request, call_next):
         return JSONResponse({"error": "injected failure"}, status_code=500)
     return await call_next(request)
 
+
 @app.get("/healthz")
-def healthz(): return {"status": "ok"}
+def healthz():
+    return {"status": "ok"}
+
 
 @app.get("/readyz")
 def readyz():
@@ -34,6 +42,7 @@ def readyz():
     except redis.RedisError:
         raise HTTPException(503, "redis unavailable")
     return {"status": "ready"}
+
 
 @app.post("/jobs")
 async def submit_job(authorization: str = Header(...)):
@@ -44,28 +53,40 @@ async def submit_job(authorization: str = Header(...)):
     r.lpush("jobs", "job")
     return {"queued": True}
 
+
 @app.get("/stats")
 def stats():
     return {"queued": r.llen("jobs"), "done": int(r.get("jobs_done") or 0)}
+
 
 # --- chaos endpoints (dev/demo only) ---
 def _require_chaos():
     if not ENABLE_CHAOS:
         raise HTTPException(404)
 
+
 @app.post("/chaos/crash")
 def crash():
     _require_chaos()
     os._exit(1)  # hard kill, simulates a real crash
 
+
 @app.post("/chaos/errors")
 def set_errors(rate: float):
-    _require_chaos(); chaos["error_rate"] = rate; return chaos
+    _require_chaos()
+    chaos["error_rate"] = rate
+    return chaos
+
 
 @app.post("/chaos/latency")
 def set_latency(ms: int):
-    _require_chaos(); chaos["latency_ms"] = ms; return chaos
+    _require_chaos()
+    chaos["latency_ms"] = ms
+    return chaos
+
 
 @app.post("/chaos/reset")
 def reset():
-    _require_chaos(); chaos.update(error_rate=0.0, latency_ms=0); return chaos
+    _require_chaos()
+    chaos.update(error_rate=0.0, latency_ms=0)
+    return chaos
