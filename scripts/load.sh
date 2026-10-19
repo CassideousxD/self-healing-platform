@@ -3,6 +3,7 @@ set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8000}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:8081}"
+JOB_EVERY="${JOB_EVERY:-20}"
 
 echo "Starting steady load generator against API at $API_URL..."
 echo "Authenticating via frontend proxy ($FRONTEND_URL/auth/login)..."
@@ -20,15 +21,16 @@ if [[ -z "$TOKEN" || "$TOKEN" == *'"error"'* ]]; then
 fi
 
 echo "Authenticated successfully."
-echo "Generating ~5 req/s (POST /jobs and GET /stats). Press Ctrl+C to stop."
+echo "Generating traffic (GET /stats every iteration, POST /jobs every $JOB_EVERY iterations). Press Ctrl+C to stop."
 
 DURATION="${1:-0}"
 START_TIME=$(date +%s)
 
 COUNT=0
+ITER=0
 stop() {
   echo ""
-  echo "Load generation stopped cleanly. Total requests sent: $COUNT"
+  echo "Load generation stopped cleanly. Total requests sent: $COUNT (iterations: $ITER)"
   exit 0
 }
 
@@ -41,15 +43,20 @@ while true; do
       stop
     fi
   fi
-  # Request 1: POST /jobs
-  R1=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/jobs" \
-    -H "Authorization: $TOKEN" || echo "err")
-  COUNT=$((COUNT + 1))
-  sleep 0.2
+  ITER=$((ITER + 1))
+
+  # Request 1: POST /jobs (submitted every JOB_EVERY iterations)
+  R1="skip"
+  if [[ "$JOB_EVERY" -gt 0 ]] && (( ITER % JOB_EVERY == 0 )); then
+    R1=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API_URL/jobs" \
+      -H "Authorization: $TOKEN" || echo "err")
+    COUNT=$((COUNT + 1))
+    sleep 0.2
+  fi
 
   # Request 2: GET /stats
   R2=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/stats" || echo "err")
   COUNT=$((COUNT + 1))
-  echo "[req $COUNT] POST /jobs -> $R1 | GET /stats -> $R2"
+  echo "[req $COUNT, iter $ITER] POST /jobs -> $R1 | GET /stats -> $R2"
   sleep 0.2
 done
