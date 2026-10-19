@@ -150,6 +150,17 @@ class SafetyRails:
         """Evaluate safety rails, policies, rate limits, and ownership for an incoming alert."""
         incident_id = f"{alert.alertname}:{alert.service}:{alert.startsAt}"
 
+        # 0. Policy fail closed check: refuse every action if policy is missing or unparseable
+        if not self.policy.is_valid:
+            DECISIONS_TOTAL.labels(decision="refuse").inc()
+            return Decision(
+                allowed=False,
+                decision="refuse",
+                reason="policy_invalid_or_missing",
+                incident_id=incident_id,
+                dry_run=self.dry_run,
+            )
+
         # 1. Stateless / Filter checks (outside lock)
         if alert.status != "resolved":
             # Check remediation filter: strictly require remediation == "auto"

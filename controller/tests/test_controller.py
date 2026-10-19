@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 import sys
 import threading
 import time
@@ -9,13 +10,15 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from kubernetes.client.rest import ApiException
 
+from controller.app import main
 from controller.app.actions import RestartPodAction, RolloutRestartAction
 from controller.app.incident_log import log_incident_event
 from controller.app.main import _process_alert_sync, app
-from controller.app.policy import PolicyEngine
+from controller.app.policy import DEFAULT_POLICY, PolicyEngine
 from controller.app.rails import SafetyRails
 from controller.app.schemas import Alert, AlertmanagerWebhook
 
@@ -23,9 +26,11 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def policy():
-    """Create a policy engine with clean default test rules."""
-    return PolicyEngine()
+def policy(tmp_path):
+    """Create a policy engine with clean default test rules from a valid temporary file."""
+    p_file = tmp_path / "policy.yaml"
+    p_file.write_text(yaml.dump(DEFAULT_POLICY), encoding="utf-8")
+    return PolicyEngine(policy_path=str(p_file))
 
 
 @pytest.fixture
@@ -543,8 +548,13 @@ def test_unknown_alertname_ignored(rails, mock_k8s):
     assert d.reason == "unknown_alert"
 
 
-def test_healthz_and_readyz_and_metrics():
-    """Verify healthz, readyz, and metrics endpoints return 200."""
+def test_healthz_and_readyz_and_metrics(tmp_path, monkeypatch):
+    """Verify healthz, readyz, and metrics endpoints return 200 when policy is valid."""
+    policy_file = tmp_path / "policy.yaml"
+    policy_file.write_text(yaml.dump(DEFAULT_POLICY), encoding="utf-8")
+    valid_pe = PolicyEngine(policy_path=str(policy_file))
+    monkeypatch.setattr(main, "policy_engine", valid_pe)
+
     client = TestClient(app)
     assert client.get("/healthz").status_code == 200
     assert client.get("/readyz").status_code == 200
@@ -552,6 +562,77 @@ def test_healthz_and_readyz_and_metrics():
     metrics_resp = client.get("/metrics")
     assert metrics_resp.status_code == 200
     assert "controller_alerts_received_total" in metrics_resp.text
+
+
+def test_dry_run_approved_restart_releases_in_flight_zero_writes(rails, mock_k8s, monkeypatch):
+    """With DRY_RUN=true, process an approved restart alert through _process_alert_sync:
+
+    asserts global_in_flight is False afterwards, and zero Kubernetes mutating calls are made.
+    """
+    monkeypatch.setenv("DRY_RUN", "true")
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+
+    # Process alert through _process_alert_sync
+    _process_alert_sync(alert, rails, mock_k8s)
+
+    # In-flight flag must be cleanly released to False
+    assert rails.global_in_flight is False
+
+    # Zero Kubernetes mutating calls made
+    mock_k8s.apps_v1.patch_namespaced_deployment.assert_not_called()
+    mock_k8s.core_v1.delete_namespaced_pod.assert_not_called()
+
+
+def test_missing_or_unparseable_policy_fails_closed_refuses_actions_and_readyz_503(tmp_path, monkeypatch, caplog):
+    """Missing or unparseable policy fails closed: refuses actions, logs ERROR, readyz returns 503."""
+    # 1. Missing policy file
+    missing_path = tmp_path / "nonexistent_policy.yaml"
+    with caplog.at_level(logging.ERROR):
+        pe_missing = PolicyEngine(policy_path=str(missing_path))
+    assert pe_missing.is_valid is False
+    assert "Policy file not found" in pe_missing.load_error
+    assert any("PolicyEngine initialization failed" in r.message for r in caplog.records)
+
+    rails_missing = SafetyRails(pe_missing)
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+    decision = rails_missing.evaluate(alert)
+    assert decision.allowed is False
+    assert decision.decision == "refuse"
+    assert decision.reason == "policy_invalid_or_missing"
+
+    # Readyz with missing policy returns 503
+    monkeypatch.setattr(main, "policy_engine", pe_missing)
+    client = TestClient(app)
+    ready_missing = client.get("/readyz")
+    assert ready_missing.status_code == 503
+    assert ready_missing.json()["status"] == "unhealthy"
+
+    # 2. Unparseable / corrupted policy file
+    corrupt_path = tmp_path / "corrupt_policy.yaml"
+    corrupt_path.write_text(":: invalid: yaml: { [", encoding="utf-8")
+    with caplog.at_level(logging.ERROR):
+        pe_corrupt = PolicyEngine(policy_path=str(corrupt_path))
+    assert pe_corrupt.is_valid is False
+    assert "Failed to parse policy YAML" in pe_corrupt.load_error
+
+    rails_corrupt = SafetyRails(pe_corrupt)
+    decision_corrupt = rails_corrupt.evaluate(alert)
+    assert decision_corrupt.allowed is False
+    assert decision_corrupt.decision == "refuse"
+    assert decision_corrupt.reason == "policy_invalid_or_missing"
+
+    monkeypatch.setattr(main, "policy_engine", pe_corrupt)
+    ready_corrupt = client.get("/readyz")
+    assert ready_corrupt.status_code == 503
+    assert ready_corrupt.json()["status"] == "unhealthy"
 
 
 def test_incident_log_survives_unwritable_directory(monkeypatch):

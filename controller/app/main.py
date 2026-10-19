@@ -76,9 +76,14 @@ def healthz():
     return {"status": "ok"}
 
 
-@app.get("/readyz", status_code=status.HTTP_200_OK)
+@app.get("/readyz")
 def readyz():
-    """Readiness probe: returns 200."""
+    """Readiness probe: returns 200 if policy is valid, 503 if missing or unparseable."""
+    if not policy_engine.is_valid:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "reason": policy_engine.load_error or "policy_invalid_or_missing"},
+        )
     return {"status": "ok"}
 
 
@@ -152,35 +157,35 @@ def _process_alert_sync(alert: Alert, rails: SafetyRails, k8s: K8sClients):
         return
 
     # Action is approved
-    action_impl = ACTION_REGISTRY.get(decision.action or "")
-    if not action_impl:
-        logger.warning(f"No action implementation registered for {decision.action}")
-        return
-
-    if decision.action == "log_only":
-        outcome = action_impl.execute(alert, k8s, dry_run=decision.dry_run)
-        ACTIONS_TOTAL.labels(action="log_only", outcome=outcome).inc()
-        log_incident_event(
-            event="action_finished",
-            incident_id=incident_id,
-            alertname=alert.alertname,
-            service=alert.service,
-            pod=alert.pod,
-            severity=alert.severity,
-            fingerprint=alert.fingerprint,
-            starts_at=alert.startsAt,
-            decision=decision.decision,
-            reason=decision.reason,
-            action=decision.action,
-            outcome=outcome,
-            dry_run=rails.dry_run,
-        )
-        return
-
-    # Mutating cluster action (rollout_restart or restart_pod)
     # Notice: global_in_flight was set to True atomically inside rails.evaluate() under the lock
-    start_time = time.time()
     try:
+        action_impl = ACTION_REGISTRY.get(decision.action or "")
+        if not action_impl:
+            logger.warning(f"No action implementation registered for {decision.action}")
+            return
+
+        if decision.action == "log_only":
+            outcome = action_impl.execute(alert, k8s, dry_run=decision.dry_run)
+            ACTIONS_TOTAL.labels(action="log_only", outcome=outcome).inc()
+            log_incident_event(
+                event="action_finished",
+                incident_id=incident_id,
+                alertname=alert.alertname,
+                service=alert.service,
+                pod=alert.pod,
+                severity=alert.severity,
+                fingerprint=alert.fingerprint,
+                starts_at=alert.startsAt,
+                decision=decision.decision,
+                reason=decision.reason,
+                action=decision.action,
+                outcome=outcome,
+                dry_run=rails.dry_run,
+            )
+            return
+
+        # Mutating cluster action (rollout_restart or restart_pod)
+        start_time = time.time()
         log_incident_event(
             event="action_started",
             incident_id=incident_id,
