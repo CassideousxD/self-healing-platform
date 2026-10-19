@@ -103,7 +103,7 @@ def test_redelivery_inside_cooldown_is_noop(rails, mock_k8s):
     assert d1.allowed is True
     assert d1.decision == "act"
     # Action releases in-flight flag after execution
-    rails.release_in_flight()
+    rails.release_in_flight(d1.in_flight_token)
 
     # Immediate second delivery: skipped due to cooldown
     d2 = rails.evaluate(alert, mock_k8s)
@@ -123,7 +123,7 @@ def test_repeat_after_cooldown_acts_again(rails, mock_k8s):
     d1 = rails.evaluate(alert, mock_k8s)
     assert d1.allowed is True
     assert d1.attempt == 1
-    rails.release_in_flight()
+    rails.release_in_flight(d1.in_flight_token)
 
     # Simulate passage of 250s (greater than 240s cooldown)
     with patch("time.time", return_value=time.time() + 250):
@@ -146,21 +146,21 @@ def test_cooldown_checked_before_circuit_breaker(rails, mock_k8s):
         d1 = rails.evaluate(alert, mock_k8s)
         assert d1.allowed is True
         assert d1.attempt == 1
-        rails.release_in_flight()
+        rails.release_in_flight(d1.in_flight_token)
 
     # Action 2 (t = 10300, cooldown 240s elapsed)
     with patch("time.time", return_value=base_time + 300):
         d2 = rails.evaluate(alert, mock_k8s)
         assert d2.allowed is True
         assert d2.attempt == 2
-        rails.release_in_flight()
+        rails.release_in_flight(d2.in_flight_token)
 
     # Action 3 (t = 10600)
     with patch("time.time", return_value=base_time + 600):
         d3 = rails.evaluate(alert, mock_k8s)
         assert d3.allowed is True
         assert d3.attempt == 3
-        rails.release_in_flight()
+        rails.release_in_flight(d3.in_flight_token)
 
     # Delivery 5 seconds after 3rd action (t = 10605):
     # Must be skip(cooldown_active), NOT escalate!
@@ -201,7 +201,7 @@ def test_circuit_breaker_sliding_window(rails, mock_k8s):
         with patch("time.time", return_value=base_time + offset):
             d = rails.evaluate(alert, mock_k8s)
             assert d.allowed is True
-            rails.release_in_flight()
+            rails.release_in_flight(d.in_flight_token)
 
     # Advance time by 3605s (actions from t=0 and t=300 have slid out of the 1-hr window)
     with patch("time.time", return_value=base_time + 3605):
@@ -317,7 +317,7 @@ def test_second_crashlooping_pod_of_same_service_in_cooldown_skipped(rails, mock
     )
     d1 = rails.evaluate(alert1, mock_k8s)
     assert d1.allowed is True
-    rails.release_in_flight()
+    rails.release_in_flight(d1.in_flight_token)
 
     # Pod 2 of same service arrives 30s later (inside 240s cooldown)
     alert2 = Alert(
@@ -343,7 +343,7 @@ def test_resolved_closes_incident_and_clears_state(rails, mock_k8s):
     # Open incident
     d_fire = rails.evaluate(firing_alert, mock_k8s)
     assert d_fire.allowed is True
-    rails.release_in_flight()
+    rails.release_in_flight(d_fire.in_flight_token)
 
     key = (firing_alert.alertname, firing_alert.service, firing_alert.startsAt)
     assert key in rails.active_incidents
@@ -373,9 +373,10 @@ def test_global_in_flight_cap(rails, mock_k8s):
     data = load_fixture("alertmanager_firing.json")
     alert = AlertmanagerWebhook.model_validate(data).alerts[0]
 
-    # Set in flight manually
+    # Set in flight manually with a token
     rails.global_in_flight = True
     rails.in_flight_since = time.time()
+    rails._in_flight_token = "manual_token"
 
     decision = rails.evaluate(alert, mock_k8s)
     assert decision.allowed is False
@@ -386,11 +387,12 @@ def test_global_in_flight_cap(rails, mock_k8s):
     key = (alert.alertname, alert.service, alert.startsAt)
     assert key not in rails.active_incidents or rails.active_incidents[key].attempts == 0
 
-    # Release in flight
-    rails.release_in_flight()
+    # Release in flight with token
+    rails.release_in_flight("manual_token")
     decision2 = rails.evaluate(alert, mock_k8s)
     assert decision2.allowed is True
     assert decision2.decision == "act"
+    rails.release_in_flight(decision2.in_flight_token)
 
 
 def test_concurrent_evaluate_calls_global_in_flight(rails, mock_k8s):
@@ -425,10 +427,12 @@ def test_concurrent_evaluate_calls_global_in_flight(rails, mock_k8s):
     assert "skip" in decisions
     skip_decision = next(r for r in results if r.decision == "skip")
     assert skip_decision.reason == "global_in_flight"
+    act_decision = next(r for r in results if r.decision == "act")
+    rails.release_in_flight(act_decision.in_flight_token)
 
 
 def test_in_flight_flag_released_on_action_exception(rails, mock_k8s):
-    """When action execution raises an exception, the in-flight flag is safely released in finally."""
+    """When action execution raises an exception, the in-flight flag is safely released in finally and worker continues."""
     alert = Alert(
         status="firing",
         labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
@@ -436,11 +440,11 @@ def test_in_flight_flag_released_on_action_exception(rails, mock_k8s):
     )
 
     with patch("controller.app.actions.RolloutRestartAction.execute", side_effect=RuntimeError("K8s API boom")):
-        with pytest.raises(RuntimeError):
-            _process_alert_sync(alert, rails, mock_k8s)
+        _process_alert_sync(alert, rails, mock_k8s)
 
     # In-flight cap must be cleanly released despite exception
     assert rails.global_in_flight is False
+    assert rails._in_flight_token is None
 
 
 def test_stale_in_flight_flag_auto_expires(rails, mock_k8s):
@@ -453,11 +457,156 @@ def test_stale_in_flight_flag_auto_expires(rails, mock_k8s):
 
     rails.global_in_flight = True
     rails.in_flight_since = time.time() - 190.0  # 190s ago (stale)
+    rails._in_flight_token = "stale_token"
 
     decision = rails.evaluate(alert, mock_k8s)
     assert decision.allowed is True
     assert decision.decision == "act"
     assert rails.global_in_flight is True
+    assert rails._in_flight_token == decision.in_flight_token
+    rails.release_in_flight(decision.in_flight_token)
+
+
+def test_mutating_in_flight_log_only_processed_flag_still_held(rails, mock_k8s):
+    """A mutating action is in flight; a log_only alert is processed to completion through
+
+    _process_alert_sync; the flag is STILL held and a second mutating alert is still skip(global_in_flight).
+    """
+    mutating_alert1 = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+    d1 = rails.evaluate(mutating_alert1, mock_k8s)
+    assert d1.allowed is True
+    assert rails.global_in_flight is True
+    assert rails._in_flight_token == d1.in_flight_token
+    initial_token = d1.in_flight_token
+
+    # Process a log_only alert to completion
+    log_only_alert = Alert(
+        status="firing",
+        labels={"alertname": "PodRestarted", "service": "api", "pod": "api-1", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:01:00Z",
+    )
+    _process_alert_sync(log_only_alert, rails, mock_k8s)
+
+    # Flag MUST STILL be held with the original mutating token!
+    assert rails.global_in_flight is True
+    assert rails._in_flight_token == initial_token
+
+    # A second mutating alert is evaluated: must be skip(global_in_flight)
+    mutating_alert2 = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "auth", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:02:00Z",
+    )
+    d2 = rails.evaluate(mutating_alert2, mock_k8s)
+    assert d2.allowed is False
+    assert d2.decision == "skip"
+    assert d2.reason == "global_in_flight"
+
+    # Finally release original token
+    rails.release_in_flight(initial_token)
+    assert rails.global_in_flight is False
+    assert rails._in_flight_token is None
+
+
+def test_action_watchdog_expiry_token_safety(rails, mock_k8s):
+    """Action A takes the flag, the watchdog expires it, action B is approved with a new token,
+
+    A then finishes: B's flag is still held; B's own release clears it.
+    """
+    base_time = 10000.0
+    alert_a = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+    alert_b = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "auth", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:01:00Z",
+    )
+
+    with patch("time.time", return_value=base_time):
+        d_a = rails.evaluate(alert_a, mock_k8s)
+        assert d_a.allowed is True
+        token_a = d_a.in_flight_token
+        assert rails._in_flight_token == token_a
+
+    # 200s later (watchdog > 180s expired): Action B is evaluated
+    with patch("time.time", return_value=base_time + 200.0):
+        d_b = rails.evaluate(alert_b, mock_k8s)
+        assert d_b.allowed is True
+        token_b = d_b.in_flight_token
+        assert token_b != token_a
+        assert rails._in_flight_token == token_b
+        assert rails.global_in_flight is True
+
+        # Now Action A finishes and attempts to release token_a (stale)
+        rails.release_in_flight(token_a)
+
+        # Token B's flag MUST STILL be held!
+        assert rails.global_in_flight is True
+        assert rails._in_flight_token == token_b
+
+        # Action B finishes and releases token_b
+        rails.release_in_flight(token_b)
+        assert rails.global_in_flight is False
+        assert rails._in_flight_token is None
+
+
+def test_log_incident_event_decision_error_releases_flag(rails, mock_k8s):
+    """log_incident_event raises once on the 'decision' event right after evaluate()
+
+    approved a mutating action: the flag is released and no exception escapes the worker.
+    """
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+
+    orig_log = log_incident_event
+
+    def mock_log(**kwargs):
+        if kwargs.get("event") == "decision":
+            raise RuntimeError("Disk full or log failure on decision")
+        return orig_log(**kwargs)
+
+    with patch("controller.app.main.log_incident_event", side_effect=mock_log):
+        # Must not raise
+        _process_alert_sync(alert, rails, mock_k8s)
+
+    # In-flight flag must be released in finally block
+    assert rails.global_in_flight is False
+    assert rails._in_flight_token is None
+
+
+def test_unexpected_exception_in_evaluate_logged_as_error_event(rails, mock_k8s):
+    """An unexpected exception inside evaluate() is logged as an 'error' event and does not crash the worker or leave flag set."""
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+
+    logged_events = []
+
+    def spy_log(**kwargs):
+        logged_events.append(kwargs)
+        return {"event": kwargs.get("event")}
+
+    with patch.object(rails, "evaluate", side_effect=RuntimeError("Unexpected rails crash")), \
+         patch("controller.app.main.log_incident_event", side_effect=spy_log):
+        # Must not raise
+        _process_alert_sync(alert, rails, mock_k8s)
+
+    assert rails.global_in_flight is False
+    error_event = next((e for e in logged_events if e.get("event") == "error"), None)
+    assert error_event is not None
+    assert "Unexpected rails crash" in error_event.get("extra", {}).get("error", "")
 
 
 def test_dry_run_performs_zero_k8s_writes(mock_k8s):

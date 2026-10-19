@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -44,6 +45,7 @@ class Decision:
     dry_run: bool = True
     incident_id: str = ""
     duration_ms: float = 0.0
+    in_flight_token: Optional[str] = None
 
 
 class SafetyRails:
@@ -62,6 +64,7 @@ class SafetyRails:
         # Global in-flight cap: at most one remediation action executing at a time cluster-wide
         self.global_in_flight: bool = False
         self.in_flight_since: float = 0.0
+        self._in_flight_token: Optional[str] = None
 
     @property
     def dry_run(self) -> bool:
@@ -296,6 +299,7 @@ class SafetyRails:
                 )
                 self.global_in_flight = False
                 self.in_flight_since = 0.0
+                self._in_flight_token = None
 
             # Check Global In-Flight Cap (thundering herd protection across all services)
             if self.global_in_flight:
@@ -370,8 +374,10 @@ class SafetyRails:
 
             # Both Cooldown and Circuit Breaker allow action:
             # Set in-flight atomically under lock to block any concurrent actions
+            token = uuid.uuid4().hex
             self.global_in_flight = True
             self.in_flight_since = now
+            self._in_flight_token = token
 
             incident.attempts += 1
             incident.last_action_at = now
@@ -387,10 +393,19 @@ class SafetyRails:
                 attempt=incident.attempts,
                 incident_id=incident.incident_id,
                 dry_run=self.dry_run,
+                in_flight_token=token,
             )
 
-    def release_in_flight(self) -> None:
-        """Release the global in-flight execution flag."""
+    def release_in_flight(self, token: Optional[str] = None) -> None:
+        """Release the global in-flight execution flag if token matches current holder."""
         with self._lock:
-            self.global_in_flight = False
-            self.in_flight_since = 0.0
+            if token is not None and token == self._in_flight_token:
+                self.global_in_flight = False
+                self.in_flight_since = 0.0
+                self._in_flight_token = None
+            else:
+                logger.debug(
+                    "release_in_flight ignored: token %s does not match current %s",
+                    token,
+                    self._in_flight_token,
+                )
