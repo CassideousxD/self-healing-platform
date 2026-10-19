@@ -1,5 +1,6 @@
 """Safety rails, incident tracking, rate limits, and anti-spoofing verification."""
 
+import logging
 import os
 import threading
 import time
@@ -11,6 +12,8 @@ from kubernetes.client.rest import ApiException
 from .metrics import DECISIONS_TOTAL, INCIDENTS_OPEN
 from .policy import PolicyEngine
 from .schemas import Alert
+
+logger = logging.getLogger("controller.rails")
 
 
 @dataclass
@@ -58,6 +61,7 @@ class SafetyRails:
         self.service_actions: Dict[str, List[float]] = {}
         # Global in-flight cap: at most one remediation action executing at a time cluster-wide
         self.global_in_flight: bool = False
+        self.in_flight_since: float = 0.0
 
     @property
     def dry_run(self) -> bool:
@@ -79,16 +83,23 @@ class SafetyRails:
         return self.active_incidents[key]
 
     def _verify_pod_owner(self, pod_name: str, expected_service: str, k8s_api: Any) -> Tuple[bool, str]:
-        """Verify that a pod belongs to an allowlisted Deployment via ownerReferences traversal."""
+        """Verify that a pod belongs to an allowlisted Deployment via ownerReferences traversal.
+
+        FAIL CLOSED: Never permit a pod action if the Kubernetes API client is unavailable.
+        Uses _request_timeout=(2, 5) to guarantee calls never hang indefinitely.
+        """
+        if k8s_api is None:
+            return False, "k8s_client_unavailable"
+
         core_v1 = getattr(k8s_api, "core_v1", None)
         apps_v1 = getattr(k8s_api, "apps_v1", None)
         if core_v1 is None or apps_v1 is None:
-            # When Kubernetes client is not available or mocked without apis, permit if in allowlist
-            return True, "k8s_client_unavailable"
+            return False, "k8s_client_unavailable"
 
         namespace = "platform"
+        timeout = (2, 5)  # 2s connect, 5s read
         try:
-            pod = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+            pod = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace, _request_timeout=timeout)
         except ApiException as e:
             if e.status == 404:
                 return False, "pod_gone"
@@ -109,7 +120,7 @@ class SafetyRails:
 
         # Step 2: ReplicaSet -> Deployment ownerReference
         try:
-            rs = apps_v1.read_namespaced_replica_set(name=rs_name, namespace=namespace)
+            rs = apps_v1.read_namespaced_replica_set(name=rs_name, namespace=namespace, _request_timeout=timeout)
         except ApiException as e:
             if e.status == 404:
                 return False, "replicaset_gone"
@@ -137,37 +148,11 @@ class SafetyRails:
 
     def evaluate(self, alert: Alert, k8s_api: Any = None) -> Decision:
         """Evaluate safety rails, policies, rate limits, and ownership for an incoming alert."""
-        with self._lock:
-            now = time.time()
-            incident_id = f"{alert.alertname}:{alert.service}:{alert.startsAt}"
+        incident_id = f"{alert.alertname}:{alert.service}:{alert.startsAt}"
 
-            # 1. Handle alert resolution
-            if alert.status == "resolved":
-                key = (alert.alertname, alert.service, alert.startsAt)
-                incident = self.active_incidents.pop(key, None)
-                INCIDENTS_OPEN.set(len(self.active_incidents))
-                if incident:
-                    duration_ms = (now - incident.created_at) * 1000.0
-                    DECISIONS_TOTAL.labels(decision="resolve").inc()
-                    return Decision(
-                        allowed=False,
-                        decision="resolve",
-                        reason="incident_resolved",
-                        incident_id=incident.incident_id,
-                        duration_ms=duration_ms,
-                        dry_run=self.dry_run,
-                    )
-                else:
-                    DECISIONS_TOTAL.labels(decision="ignore").inc()
-                    return Decision(
-                        allowed=False,
-                        decision="ignore",
-                        reason="unknown_incident_resolved",
-                        incident_id=incident_id,
-                        dry_run=self.dry_run,
-                    )
-
-            # 2. Check remediation filter: strictly require remediation == "auto"
+        # 1. Stateless / Filter checks (outside lock)
+        if alert.status != "resolved":
+            # Check remediation filter: strictly require remediation == "auto"
             if alert.remediation != "auto":
                 DECISIONS_TOTAL.labels(decision="refuse").inc()
                 return Decision(
@@ -178,7 +163,7 @@ class SafetyRails:
                     dry_run=self.dry_run,
                 )
 
-            # 3. Check namespace filter: strictly require namespace == "platform"
+            # Check namespace filter: strictly require namespace == "platform"
             if alert.namespace != "platform":
                 DECISIONS_TOTAL.labels(decision="refuse").inc()
                 return Decision(
@@ -189,7 +174,7 @@ class SafetyRails:
                     dry_run=self.dry_run,
                 )
 
-            # 4. Check service allowlist
+            # Check service allowlist
             if not self.policy.is_service_allowed(alert.service):
                 DECISIONS_TOTAL.labels(decision="refuse").inc()
                 return Decision(
@@ -200,7 +185,7 @@ class SafetyRails:
                     dry_run=self.dry_run,
                 )
 
-            # 5. Check action mapping from policy
+            # Check action mapping from policy
             action_name = self.policy.get_action_for_alert(alert.alertname)
             if not action_name:
                 DECISIONS_TOTAL.labels(decision="ignore").inc()
@@ -212,34 +197,9 @@ class SafetyRails:
                     dry_run=self.dry_run,
                 )
 
-            # 6. If action is log_only, permit immediately without rate limits or K8s mutations
-            if action_name == "log_only":
-                incident = self._get_or_create_incident(alert)
-                DECISIONS_TOTAL.labels(decision="act").inc()
-                return Decision(
-                    allowed=True,
-                    decision="act",
-                    reason="log_only_action",
-                    action="log_only",
-                    attempt=1,
-                    incident_id=incident.incident_id,
-                    dry_run=self.dry_run,
-                )
-
-            # 7. Check Global In-Flight Cap (thundering herd protection across all services)
-            if self.global_in_flight:
-                # Skipped decisions MUST NOT mark the incident as handled or update cooldown
-                DECISIONS_TOTAL.labels(decision="skip").inc()
-                return Decision(
-                    allowed=False,
-                    decision="skip",
-                    reason="global_in_flight",
-                    action=action_name,
-                    incident_id=incident_id,
-                    dry_run=self.dry_run,
-                )
-
-            # 8. Pod ownership anti-spoofing verification (for restart_pod)
+            # 2. Pod ownership anti-spoofing verification (OUTSIDE LOCK)
+            # Read-only network calls run before acquiring the mutex so K8s latency
+            # never blocks concurrent threads evaluating other alerts.
             if action_name == "restart_pod":
                 if not alert.pod:
                     DECISIONS_TOTAL.labels(decision="refuse").inc()
@@ -271,17 +231,107 @@ class SafetyRails:
                         incident_id=incident_id,
                         dry_run=self.dry_run,
                     )
+        else:
+            action_name = None
 
-            # 9. Get or create incident tracker
+        # 3. Synchronized State Evaluation (UNDER LOCK)
+        with self._lock:
+            now = time.time()
+
+            # Handle alert resolution
+            if alert.status == "resolved":
+                key = (alert.alertname, alert.service, alert.startsAt)
+                incident = self.active_incidents.pop(key, None)
+                INCIDENTS_OPEN.set(len(self.active_incidents))
+                if incident:
+                    duration_ms = (now - incident.created_at) * 1000.0
+                    DECISIONS_TOTAL.labels(decision="resolve").inc()
+                    return Decision(
+                        allowed=False,
+                        decision="resolve",
+                        reason="incident_resolved",
+                        incident_id=incident.incident_id,
+                        duration_ms=duration_ms,
+                        dry_run=self.dry_run,
+                    )
+                else:
+                    DECISIONS_TOTAL.labels(decision="ignore").inc()
+                    return Decision(
+                        allowed=False,
+                        decision="ignore",
+                        reason="unknown_incident_resolved",
+                        incident_id=incident_id,
+                        dry_run=self.dry_run,
+                    )
+
+            # If action is log_only, permit immediately without rate limits or K8s mutations
+            if action_name == "log_only":
+                incident = self._get_or_create_incident(alert)
+                DECISIONS_TOTAL.labels(decision="act").inc()
+                return Decision(
+                    allowed=True,
+                    decision="act",
+                    reason="log_only_action",
+                    action="log_only",
+                    attempt=1,
+                    incident_id=incident.incident_id,
+                    dry_run=self.dry_run,
+                )
+
+            # Auto-expire hung or stale global in-flight cap (> 180s)
+            if self.global_in_flight and (now - self.in_flight_since >= 180.0):
+                logger.error(
+                    f"Global in-flight action expired after {now - self.in_flight_since:.1f}s. Auto-releasing."
+                )
+                self.global_in_flight = False
+                self.in_flight_since = 0.0
+
+            # Check Global In-Flight Cap (thundering herd protection across all services)
+            if self.global_in_flight:
+                # Skipped decisions MUST NOT mark the incident as handled or update cooldown
+                DECISIONS_TOTAL.labels(decision="skip").inc()
+                return Decision(
+                    allowed=False,
+                    decision="skip",
+                    reason="global_in_flight",
+                    action=action_name,
+                    incident_id=incident_id,
+                    dry_run=self.dry_run,
+                )
+
+            # Get or create incident tracker
             incident = self._get_or_create_incident(alert)
 
-            # 10. Check Circuit Breaker (sliding 1-hour window per service)
+            # ORDER OF CHECKS: Cooldown FIRST, then Circuit Breaker.
+            # A delivery inside the cooldown is always skip(cooldown_active),
+            # even right after the 3rd action.
+            cooldown_key = (alert.alertname, alert.service)
+            last_action_at = max(
+                incident.last_action_at,
+                self.service_cooldowns.get(cooldown_key, 0.0),
+            )
+
+            if last_action_at > 0.0:
+                elapsed = now - last_action_at
+                if elapsed < self.policy.cooldown_seconds:
+                    DECISIONS_TOTAL.labels(decision="skip").inc()
+                    return Decision(
+                        allowed=False,
+                        decision="skip",
+                        reason="cooldown_active",
+                        action=action_name,
+                        attempt=incident.attempts,
+                        incident_id=incident.incident_id,
+                        dry_run=self.dry_run,
+                    )
+
+            # Cooldown has elapsed: apply Circuit Breaker (sliding 1-hour window per service)
             # Prune actions older than 3600 seconds
             history = self.service_actions.setdefault(alert.service, [])
             self.service_actions[alert.service] = [t for t in history if now - t < 3600.0]
             if len(self.service_actions[alert.service]) >= self.policy.max_actions_per_hour:
                 if incident.escalated:
-                    # Already escalated: skip without log spam
+                    # Already escalated: skip without log spam on later repeats
                     DECISIONS_TOTAL.labels(decision="skip").inc()
                     return Decision(
                         allowed=False,
@@ -307,30 +357,11 @@ class SafetyRails:
                         dry_run=self.dry_run,
                     )
 
-            # 11. Cooldown & Deduplication check
-            # Cooldown is tracked per (alertname, service) and per incident.
-            # A second crash-looping pod of the same service inside cooldown is also skipped.
-            cooldown_key = (alert.alertname, alert.service)
-            last_action_at = max(
-                incident.last_action_at,
-                self.service_cooldowns.get(cooldown_key, 0.0),
-            )
+            # Both Cooldown and Circuit Breaker allow action:
+            # Set in-flight atomically under lock to block any concurrent actions
+            self.global_in_flight = True
+            self.in_flight_since = now
 
-            if last_action_at > 0.0:
-                elapsed = now - last_action_at
-                if elapsed < self.policy.cooldown_seconds:
-                    DECISIONS_TOTAL.labels(decision="skip").inc()
-                    return Decision(
-                        allowed=False,
-                        decision="skip",
-                        reason="cooldown_active",
-                        action=action_name,
-                        attempt=incident.attempts,
-                        incident_id=incident.incident_id,
-                        dry_run=self.dry_run,
-                    )
-
-            # 12. Approved for action (attempt n+1)
             incident.attempts += 1
             incident.last_action_at = now
             self.service_cooldowns[cooldown_key] = now
@@ -347,7 +378,8 @@ class SafetyRails:
                 dry_run=self.dry_run,
             )
 
-    def set_in_flight(self, in_flight: bool) -> None:
-        """Set or release the global in-flight execution flag."""
+    def release_in_flight(self) -> None:
+        """Release the global in-flight execution flag."""
         with self._lock:
-            self.global_in_flight = in_flight
+            self.global_in_flight = False
+            self.in_flight_since = 0.0

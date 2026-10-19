@@ -1,6 +1,9 @@
 """Unit tests for the self-healing controller, safety rails, policies, and actions."""
 
+import io
 import json
+import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,7 +13,8 @@ from fastapi.testclient import TestClient
 from kubernetes.client.rest import ApiException
 
 from controller.app.actions import RestartPodAction, RolloutRestartAction
-from controller.app.main import app
+from controller.app.incident_log import log_incident_event
+from controller.app.main import _process_alert_sync, app
 from controller.app.policy import PolicyEngine
 from controller.app.rails import SafetyRails
 from controller.app.schemas import Alert, AlertmanagerWebhook
@@ -37,6 +41,14 @@ def mock_k8s():
     client_mock.core_v1 = MagicMock()
     client_mock.apps_v1 = MagicMock()
     return client_mock
+
+
+def make_owner_ref(kind: str, name: str) -> MagicMock:
+    """Helper to create a Kubernetes OwnerReference mock with explicit attribute assignment."""
+    ref = MagicMock()
+    ref.kind = kind
+    ref.name = name
+    return ref
 
 
 def load_fixture(filename: str) -> dict:
@@ -85,6 +97,8 @@ def test_redelivery_inside_cooldown_is_noop(rails, mock_k8s):
     d1 = rails.evaluate(alert, mock_k8s)
     assert d1.allowed is True
     assert d1.decision == "act"
+    # Action releases in-flight flag after execution
+    rails.release_in_flight()
 
     # Immediate second delivery: skipped due to cooldown
     d2 = rails.evaluate(alert, mock_k8s)
@@ -104,6 +118,7 @@ def test_repeat_after_cooldown_acts_again(rails, mock_k8s):
     d1 = rails.evaluate(alert, mock_k8s)
     assert d1.allowed is True
     assert d1.attempt == 1
+    rails.release_in_flight()
 
     # Simulate passage of 250s (greater than 240s cooldown)
     with patch("time.time", return_value=time.time() + 250):
@@ -113,46 +128,82 @@ def test_repeat_after_cooldown_acts_again(rails, mock_k8s):
         assert d2.attempt == 2
 
 
-def test_circuit_breaker_escalates_on_fourth_action(rails, mock_k8s):
-    """The 4th attempt within an hour trips the circuit breaker and escalates once."""
+def test_cooldown_checked_before_circuit_breaker(rails, mock_k8s):
+    """Order of checks: cooldown checked first. A delivery 5s after the 3rd action is cooldown_active, not escalate."""
     data = load_fixture("alertmanager_firing.json")
     webhook = AlertmanagerWebhook.model_validate(data)
     alert = webhook.alerts[0]
 
-    base_time = time.time()
+    base_time = 10000.0
 
-    # Attempt 1 (t = 0)
+    # Action 1 (t = 10000)
     with patch("time.time", return_value=base_time):
         d1 = rails.evaluate(alert, mock_k8s)
         assert d1.allowed is True
         assert d1.attempt == 1
+        rails.release_in_flight()
 
-    # Attempt 2 (t = 300)
+    # Action 2 (t = 10300, cooldown 240s elapsed)
     with patch("time.time", return_value=base_time + 300):
         d2 = rails.evaluate(alert, mock_k8s)
         assert d2.allowed is True
         assert d2.attempt == 2
+        rails.release_in_flight()
 
-    # Attempt 3 (t = 600)
+    # Action 3 (t = 10600)
     with patch("time.time", return_value=base_time + 600):
         d3 = rails.evaluate(alert, mock_k8s)
         assert d3.allowed is True
         assert d3.attempt == 3
+        rails.release_in_flight()
 
-    # Attempt 4 (t = 900) -> 3 actions already taken within the hour, trips circuit breaker
+    # Delivery 5 seconds after 3rd action (t = 10605):
+    # Must be skip(cooldown_active), NOT escalate!
+    with patch("time.time", return_value=base_time + 605):
+        d_cooldown = rails.evaluate(alert, mock_k8s)
+        assert d_cooldown.allowed is False
+        assert d_cooldown.decision == "skip"
+        assert d_cooldown.reason == "cooldown_active"
+
+    # Delivery after cooldown has elapsed (t = 10900, +300s):
+    # Now breaker applies: 3 actions in 1 hour -> 4th attempt trips circuit breaker and escalates once
     with patch("time.time", return_value=base_time + 900):
-        d4 = rails.evaluate(alert, mock_k8s)
-        assert d4.allowed is False
-        assert d4.decision == "escalate"
-        assert d4.reason == "circuit_breaker_tripped"
-        assert d4.needs_human is True
+        d_escalate = rails.evaluate(alert, mock_k8s)
+        assert d_escalate.allowed is False
+        assert d_escalate.decision == "escalate"
+        assert d_escalate.reason == "circuit_breaker_tripped"
+        assert d_escalate.needs_human is True
 
-    # Attempt 5 (t = 1200) -> Already escalated, skipped without repeated error spam
+    # Subsequent delivery after cooldown (t = 11200):
+    # Already escalated -> skipped without log spam
     with patch("time.time", return_value=base_time + 1200):
-        d5 = rails.evaluate(alert, mock_k8s)
-        assert d5.allowed is False
-        assert d5.decision == "skip"
-        assert d5.reason == "already_escalated"
+        d_already = rails.evaluate(alert, mock_k8s)
+        assert d_already.allowed is False
+        assert d_already.decision == "skip"
+        assert d_already.reason == "already_escalated"
+
+
+def test_circuit_breaker_sliding_window(rails, mock_k8s):
+    """Actions older than 1 hour (3600s) slide out of the circuit breaker window and stop counting."""
+    data = load_fixture("alertmanager_firing.json")
+    webhook = AlertmanagerWebhook.model_validate(data)
+    alert = webhook.alerts[0]
+
+    base_time = 20000.0
+
+    # Execute 3 actions
+    for offset in [0, 300, 600]:
+        with patch("time.time", return_value=base_time + offset):
+            d = rails.evaluate(alert, mock_k8s)
+            assert d.allowed is True
+            rails.release_in_flight()
+
+    # Advance time by 3605s (actions from t=0 and t=300 have slid out of the 1-hr window)
+    with patch("time.time", return_value=base_time + 3605):
+        d_new = rails.evaluate(alert, mock_k8s)
+        assert d_new.allowed is True
+        assert d_new.decision == "act"
+        assert d_new.attempt == 4
 
 
 def test_multi_alert_fixture_two_pod_restarted(rails, mock_k8s):
@@ -182,14 +233,6 @@ def test_pod_crashlooping_crashtest_refused(rails, mock_k8s):
     assert decision.reason == "service_not_allowlisted"
 
 
-def make_owner_ref(kind: str, name: str) -> MagicMock:
-    """Helper to create a Kubernetes OwnerReference mock with explicit attribute assignment."""
-    ref = MagicMock()
-    ref.kind = kind
-    ref.name = name
-    return ref
-
-
 def test_pod_crashlooping_api_allowed_with_owner_verification(rails, mock_k8s):
     """Variant with service=api and pod owned by api Deployment is acted on (restart_pod)."""
     data = load_fixture("alertmanager_pod_crashlooping.json")
@@ -216,6 +259,27 @@ def test_pod_crashlooping_api_allowed_with_owner_verification(rails, mock_k8s):
     assert decision.allowed is True
     assert decision.decision == "act"
     assert decision.action == "restart_pod"
+
+
+def test_restart_pod_no_k8s_client_refused_zero_writes(rails):
+    """FAIL CLOSED: restart_pod without a valid Kubernetes client is refused and executes zero writes."""
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "PodCrashLooping", "service": "api", "pod": "api-6fb546cd54-abcde", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+    # Pass k8s_api=None
+    d1 = rails.evaluate(alert, k8s_api=None)
+    assert d1.allowed is False
+    assert d1.decision == "refuse"
+    assert d1.reason == "k8s_client_unavailable"
+
+    # Pass client with None sub-apis
+    empty_client = MagicMock(core_v1=None, apps_v1=None)
+    d2 = rails.evaluate(alert, k8s_api=empty_client)
+    assert d2.allowed is False
+    assert d2.decision == "refuse"
+    assert d2.reason == "k8s_client_unavailable"
 
 
 def test_restart_pod_404_is_noop_pod_gone(mock_k8s):
@@ -248,6 +312,7 @@ def test_second_crashlooping_pod_of_same_service_in_cooldown_skipped(rails, mock
     )
     d1 = rails.evaluate(alert1, mock_k8s)
     assert d1.allowed is True
+    rails.release_in_flight()
 
     # Pod 2 of same service arrives 30s later (inside 240s cooldown)
     alert2 = Alert(
@@ -273,6 +338,8 @@ def test_resolved_closes_incident_and_clears_state(rails, mock_k8s):
     # Open incident
     d_fire = rails.evaluate(firing_alert, mock_k8s)
     assert d_fire.allowed is True
+    rails.release_in_flight()
+
     key = (firing_alert.alertname, firing_alert.service, firing_alert.startsAt)
     assert key in rails.active_incidents
 
@@ -301,8 +368,9 @@ def test_global_in_flight_cap(rails, mock_k8s):
     data = load_fixture("alertmanager_firing.json")
     alert = AlertmanagerWebhook.model_validate(data).alerts[0]
 
-    # Set in flight
-    rails.set_in_flight(True)
+    # Set in flight manually
+    rails.global_in_flight = True
+    rails.in_flight_since = time.time()
 
     decision = rails.evaluate(alert, mock_k8s)
     assert decision.allowed is False
@@ -314,10 +382,77 @@ def test_global_in_flight_cap(rails, mock_k8s):
     assert key not in rails.active_incidents or rails.active_incidents[key].attempts == 0
 
     # Release in flight
-    rails.set_in_flight(False)
+    rails.release_in_flight()
     decision2 = rails.evaluate(alert, mock_k8s)
     assert decision2.allowed is True
     assert decision2.decision == "act"
+
+
+def test_concurrent_evaluate_calls_global_in_flight(rails, mock_k8s):
+    """Two concurrent threads calling evaluate() at the same moment: exactly one is approved."""
+    alert1 = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+    alert2 = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "auth", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+
+    results = []
+
+    def run_eval(alert):
+        res = rails.evaluate(alert, mock_k8s)
+        results.append(res)
+
+    t1 = threading.Thread(target=run_eval, args=(alert1,))
+    t2 = threading.Thread(target=run_eval, args=(alert2,))
+
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    decisions = [r.decision for r in results]
+    assert "act" in decisions
+    assert "skip" in decisions
+    skip_decision = next(r for r in results if r.decision == "skip")
+    assert skip_decision.reason == "global_in_flight"
+
+
+def test_in_flight_flag_released_on_action_exception(rails, mock_k8s):
+    """When action execution raises an exception, the in-flight flag is safely released in finally."""
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+
+    with patch("controller.app.actions.RolloutRestartAction.execute", side_effect=RuntimeError("K8s API boom")):
+        with pytest.raises(RuntimeError):
+            _process_alert_sync(alert, rails, mock_k8s)
+
+    # In-flight cap must be cleanly released despite exception
+    assert rails.global_in_flight is False
+
+
+def test_stale_in_flight_flag_auto_expires(rails, mock_k8s):
+    """A stale in-flight flag older than 180s auto-expires, logs an error, and permits the next action."""
+    alert = Alert(
+        status="firing",
+        labels={"alertname": "ApiHighErrorRate", "service": "api", "remediation": "auto", "namespace": "platform"},
+        startsAt="2026-10-18T12:00:00Z",
+    )
+
+    rails.global_in_flight = True
+    rails.in_flight_since = time.time() - 190.0  # 190s ago (stale)
+
+    decision = rails.evaluate(alert, mock_k8s)
+    assert decision.allowed is True
+    assert decision.decision == "act"
+    assert rails.global_in_flight is True
 
 
 def test_dry_run_performs_zero_k8s_writes(mock_k8s):
@@ -417,3 +552,26 @@ def test_healthz_and_readyz_and_metrics():
     metrics_resp = client.get("/metrics")
     assert metrics_resp.status_code == 200
     assert "controller_alerts_received_total" in metrics_resp.text
+
+
+def test_incident_log_survives_unwritable_directory(monkeypatch):
+    """Incident logger writes to stdout and logs a warning on stderr when the disk directory is unwritable."""
+    monkeypatch.setenv("INCIDENT_LOG_PATH", "/unwritable_root_directory/incidents.jsonl")
+
+    stderr_buf = io.StringIO()
+    stdout_buf = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stderr_buf)
+    monkeypatch.setattr(sys, "stdout", stdout_buf)
+
+    record = log_incident_event(
+        event="alert_received",
+        incident_id="test-incident",
+        alertname="ApiHighErrorRate",
+        service="api",
+    )
+
+    assert record["event"] == "alert_received"
+    stdout_val = stdout_buf.getvalue()
+    assert '"event": "alert_received"' in stdout_val
+    stderr_val = stderr_buf.getvalue()
+    assert "Warning: could not write incident log to" in stderr_val

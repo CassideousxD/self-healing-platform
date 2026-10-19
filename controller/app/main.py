@@ -178,7 +178,7 @@ def _process_alert_sync(alert: Alert, rails: SafetyRails, k8s: K8sClients):
         return
 
     # Mutating cluster action (rollout_restart or restart_pod)
-    rails.set_in_flight(True)
+    # Notice: global_in_flight was set to True atomically inside rails.evaluate() under the lock
     start_time = time.time()
     try:
         log_incident_event(
@@ -222,7 +222,7 @@ def _process_alert_sync(alert: Alert, rails: SafetyRails, k8s: K8sClients):
             extra={"attempt": decision.attempt},
         )
     finally:
-        rails.set_in_flight(False)
+        rails.release_in_flight()
 
 
 @app.post("/webhook", status_code=status.HTTP_200_OK)

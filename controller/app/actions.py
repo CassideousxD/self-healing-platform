@@ -57,7 +57,7 @@ class RestartPodAction(BaseAction):
             return "no_k8s_client"
 
         try:
-            core_v1.delete_namespaced_pod(name=pod_name, namespace=namespace)
+            core_v1.delete_namespaced_pod(name=pod_name, namespace=namespace, _request_timeout=(2, 5))
             return "pod_deleted"
         except ApiException as e:
             if e.status == 404:
@@ -81,6 +81,7 @@ class RestartPodAction(BaseAction):
                 pods = core_v1.list_namespaced_pod(
                     namespace=namespace,
                     label_selector=selector,
+                    _request_timeout=(2, 5),
                 )
                 for p in pods.items:
                     # Look for a different running & ready pod for the service
@@ -126,7 +127,7 @@ class RolloutRestartAction(BaseAction):
             }
         }
         try:
-            apps_v1.patch_namespaced_deployment(name=service, namespace=namespace, body=patch)
+            apps_v1.patch_namespaced_deployment(name=service, namespace=namespace, body=patch, _request_timeout=(2, 5))
             return "rollout_started"
         except ApiException as e:
             if e.status == 404:
@@ -143,7 +144,7 @@ class RolloutRestartAction(BaseAction):
         deadline = time.time() + timeout_sec
         while time.time() < deadline:
             try:
-                dep = apps_v1.read_namespaced_deployment(name=service, namespace=namespace)
+                dep = apps_v1.read_namespaced_deployment(name=service, namespace=namespace, _request_timeout=(2, 5))
                 spec_replicas = dep.spec.replicas or 1
                 status = dep.status
                 updated = status.updated_replicas or 0

@@ -60,8 +60,10 @@ def log_incident_event(
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding="utf-8") as f:
             f.write(line + "\n")
-    except OSError:
-        # Avoid crashing if directory cannot be created in non-container/test environments
-        pass
+    except (OSError, PermissionError) as e:
+        sys.stderr.write(
+            f"Warning: could not write incident log to {log_file_path}: {e}. Falling back to stdout only.\n"
+        )
+        sys.stderr.flush()
 
     return record
