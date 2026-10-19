@@ -59,7 +59,15 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [auth, api, worker]
+        include:
+          - service: auth
+            dir: services/auth
+          - service: api
+            dir: services/api
+          - service: worker
+            dir: services/worker
+          - service: controller
+            dir: controller
     steps:
       - uses: actions/checkout@v4
 
@@ -72,10 +80,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r services/${{ matrix.service }}/requirements.txt pytest httpx
+          pip install -r ${{ matrix.dir }}/requirements.txt pytest httpx
 
       - name: Run Pytest
-        run: pytest services/${{ matrix.service }}/tests
+        run: pytest ${{ matrix.dir }}/tests
 
   build:
     name: build (${{ matrix.service }})
@@ -83,7 +91,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [auth, api, worker, frontend]
+        include:
+          - service: auth
+            dir: services/auth
+          - service: api
+            dir: services/api
+          - service: worker
+            dir: services/worker
+          - service: frontend
+            dir: services/frontend
+          - service: controller
+            dir: controller
     steps:
       - uses: actions/checkout@v4
 
@@ -111,7 +129,7 @@ jobs:
       - name: Build and push container image
         uses: docker/build-push-action@v6
         with:
-          context: ./services/${{ matrix.service }}
+          context: ./${{ matrix.dir }}
           platforms: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: |
