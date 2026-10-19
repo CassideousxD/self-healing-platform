@@ -54,3 +54,22 @@ spec:
     - port: http
       path: /metrics
       interval: 15s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: controller
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - platform
+  selector:
+    matchLabels:
+      app: controller
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

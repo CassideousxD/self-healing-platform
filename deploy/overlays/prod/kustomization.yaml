@@ -20,3 +20,6 @@ images:
   - name: worker
     newName: ghcr.io/cassideousxd/worker
     newTag: 346edf2092679b4760e5dd6291603bc143646d32
+  - name: controller
+    newName: ghcr.io/cassideousxd/controller
+    newTag: b2b9ecaa0519bcd782b6f1ebc02dd9b92fd44356

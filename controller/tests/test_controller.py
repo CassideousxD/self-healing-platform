@@ -805,3 +805,24 @@ def test_incident_log_survives_unwritable_directory(monkeypatch):
     assert '"event": "alert_received"' in stdout_val
     stderr_val = stderr_buf.getvalue()
     assert "Warning: could not write incident log to" in stderr_val
+
+
+def test_real_deploy_base_policy_file_matches_schema_and_code():
+    """Verify that deploy/base/policy.yaml adheres to PolicyEngine schema and contains expected production rules."""
+    real_policy_file = Path(__file__).resolve().parents[2] / "deploy" / "base" / "policy.yaml"
+    assert real_policy_file.is_file(), f"Policy file not found at {real_policy_file}"
+
+    pe = PolicyEngine(policy_path=str(real_policy_file))
+    assert pe.is_valid is True
+    assert pe.load_error is None
+
+    assert pe.allowlist == ["auth", "api", "worker", "frontend"]
+    assert pe.cooldown_seconds == 240
+    assert pe.max_actions_per_hour == 3
+
+    assert pe.get_action_for_alert("PodRestarted") == "log_only"
+    assert pe.get_action_for_alert("PodCrashLooping") == "restart_pod"
+    assert pe.get_action_for_alert("ApiHighErrorRate") == "rollout_restart"
+    assert pe.get_action_for_alert("ApiHighLatency") == "log_only"
+    assert pe.get_action_for_alert("WorkerQueueBacklog") == "log_only"
+
