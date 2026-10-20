@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  labels:
+    app: controller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+    spec:
+      serviceAccountName: controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: controller
+          image: controller
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: DRY_RUN
+              value: "true"
+            - name: POLICY_PATH
+              value: "/etc/controller/policy.yaml"
+            - name: INCIDENT_LOG_PATH
+              value: "/var/lib/controller/incidents.jsonl"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: data-volume
+              mountPath: /var/lib/controller
+            - name: policy-volume
+              mountPath: /etc/controller
+              readOnly: true
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: data-volume
+          emptyDir: {}
+        - name: policy-volume
+          configMap:
+            name: controller-policy

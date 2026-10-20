@@ -1,0 +1,14 @@
+allowlist:
+  - auth
+  - api
+  - worker
+  - frontend
+cooldown_seconds: 240
+circuit_breaker:
+  max_actions_per_hour: 3
+rules:
+  PodRestarted: log_only
+  PodCrashLooping: restart_pod
+  ApiHighErrorRate: rollout_restart
+  ApiHighLatency: log_only
+  WorkerQueueBacklog: log_only

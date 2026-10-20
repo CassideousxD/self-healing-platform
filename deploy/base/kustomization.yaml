@@ -11,3 +11,11 @@ resources:
   - api.yaml
   - worker.yaml
   - frontend.yaml
+  - rbac.yaml
+  - deployment.yaml
+  - service.yaml
+
+configMapGenerator:
+  - name: controller-policy
+    files:
+      - policy.yaml
