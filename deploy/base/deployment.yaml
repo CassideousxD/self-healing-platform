@@ -37,7 +37,7 @@ spec:
                 - ALL
           env:
             - name: DRY_RUN
-              value: "true"
+              value: "false"
             - name: POLICY_PATH
               value: "/etc/controller/policy.yaml"
             - name: INCIDENT_LOG_PATH
